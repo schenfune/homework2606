@@ -87,9 +87,9 @@ sequenceDiagram
 
 图3.3 退课自动递补时序图
 
-## 3.4.4 管理员取消开课班时序
+## 3.4.4 管理员停开课程时序
 
-管理员取消开课班场景展示后台如何批量处理名单。取消操作会移除有效登记和候补登记，日志保存取消原因和影响人数。
+管理员停开课程场景展示后台如何批量处理名单。停开操作会移除有效登记和候补登记，日志保存停开原因和影响人数。
 
 ```mermaid
 sequenceDiagram
@@ -100,7 +100,7 @@ sequenceDiagram
     participant Cache as Redis缓存
     participant Log as 操作日志
 
-    Admin->>Page: 点击取消
+    Admin->>Page: 点击停开课程
     Page->>Service: 提交开课班编号和原因
     Service->>DB: 读取开课班和名单
     Service->>DB: 开课班状态改为CANCELED
@@ -110,7 +110,7 @@ sequenceDiagram
     Service-->>Page: 刷新课程统计
 ```
 
-图3.4 管理员取消开课班时序图
+图3.4 管理员停开课程时序图
 
 ## 3.4.5 时序分析结论
 

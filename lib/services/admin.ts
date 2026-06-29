@@ -197,7 +197,7 @@ export async function closeOffering(adminId: string, offeringId: string) {
         actorRole: Role.ADMIN,
         actorId: adminId,
         targetId: offeringId,
-        message: `管理员关闭${offering.course.name}`,
+        message: `管理员冻结${offering.course.name}名单`,
       },
     });
   });
@@ -252,7 +252,7 @@ export async function cancelOffering(adminId: string, offeringId: string, reason
         actorRole: Role.ADMIN,
         actorId: adminId,
         targetId: offeringId,
-        message: `管理员取消${offering.course.name}`,
+        message: `管理员停开${offering.course.name}`,
         metadata: {
           reason,
           removedCount: offering.registrations.length,

@@ -679,7 +679,7 @@ function ruleCheckToReason(check: CourseRuleCheck) {
   if (check.code === "CAPACITY") return "课程容量已满";
   if (check.code === "TIME_CONFLICT") return "上课时间冲突";
   if (check.code === "OFFERING_STATUS") {
-    return check.detail === "已取消" ? "课程已取消" : "课程名单已冻结";
+    return check.detail === "已停开" ? "课程已停开" : "课程名单已冻结";
   }
 
   return "不可选";
@@ -688,7 +688,7 @@ function ruleCheckToReason(check: CourseRuleCheck) {
 function offeringStatusDetail(status: OfferingStatus) {
   if (status === OfferingStatus.PUBLISHED) return "开放";
   if (status === OfferingStatus.CLOSED) return "已冻结";
-  return "已取消";
+  return "已停开";
 }
 
 function isTermOpen(term: { selectionStartsAt: Date; selectionEndsAt: Date }) {

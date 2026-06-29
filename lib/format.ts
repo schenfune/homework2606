@@ -11,8 +11,8 @@ export function categoryLabel(category: CourseCategory) {
 export function offeringStatusLabel(status: OfferingStatus) {
   return {
     PUBLISHED: "开放",
-    CLOSED: "已关闭",
-    CANCELED: "已取消",
+    CLOSED: "已冻结",
+    CANCELED: "已停开",
   }[status];
 }
 

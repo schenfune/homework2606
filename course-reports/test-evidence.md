@@ -30,7 +30,7 @@
 | 测试类型 | 目标 | 覆盖内容 | 优先级 |
 | --- | --- | --- | --- |
 | 单元测试 | 验证时间冲突算法 | 节次重叠、周次重叠、无冲突边界 | 高 |
-| 集成测试 | 验证核心业务规则 | 选课、重复提交、候补、递补、取消课程 | 高 |
+| 集成测试 | 验证核心业务规则 | 选课、重复提交、候补、递补、停开课程 | 高 |
 | 构建检查 | 验证类型和页面编译 | Next构建、服务端组件、Prisma类型 | 高 |
 | 静态检查 | 验证代码规范 | ESLint规则、导入风格 | 中 |
 | 压测脚本 | 验证并发入口 | HTTP选课接口、限流阈值、失败率 | 中 |
@@ -56,7 +56,7 @@
 | TC10 | 退课自动递补 | 一名学生有效，一名学生候补 | 有效学生退课 | 候补学生转为`ACTIVE`，容量仍为1 | `tests/enrollment.integration.test.ts` |
 | TC11 | 退出候补 | 学生处于候补状态 | 调用`dropCourse` | 登记改为`DROPPED`，容量不变化 | `tests/enrollment.integration.test.ts` |
 | TC12 | 管理员详情 | 存在退课、移除和日志 | 查询管理端dashboard | 详情含名单和相关日志 | `tests/admin.integration.test.ts` |
-| TC13 | 取消含候补课程 | 课程含有效和候补登记 | 管理员取消开课班 | 两类登记统一改为`REMOVED` | `tests/admin.integration.test.ts` |
+| TC13 | 停开含候补课程 | 课程含有效和候补登记 | 管理员停开课程 | 两类登记统一改为`REMOVED` | `tests/admin.integration.test.ts` |
 
 ## 7.4 命令验证记录
 

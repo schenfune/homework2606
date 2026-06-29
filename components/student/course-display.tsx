@@ -138,7 +138,7 @@ function reasonToLabel(reason: string) {
   if (reason.includes("候补")) return "候补中";
   if (reason.includes("开放期")) return "未开放";
   if (reason.includes("冻结")) return "冻结";
-  if (reason.includes("取消")) return "停开";
+  if (reason.includes("停开")) return "停开";
   if (reason.includes("容量")) return "满员";
   if (reason.includes("专业")) return "限选";
   if (reason.includes("冲突")) return "冲突";

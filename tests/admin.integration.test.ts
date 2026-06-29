@@ -28,7 +28,7 @@ describe("admin dashboard", () => {
     const dropped = await selectCourse(studentA.id, offering.id);
     await dropCourse(studentA.id, dropped.id);
     await selectCourse(studentB.id, offering.id);
-    await cancelOffering("admin-test", offering.id, "测试取消");
+    await cancelOffering("admin-test", offering.id, "测试停开");
 
     const dashboard = await getAdminDashboard();
     const detail = dashboard.offeringDetails.find((item) => item.id === offering.id);
@@ -46,7 +46,7 @@ describe("admin dashboard", () => {
     );
   });
 
-  it("returns waitlist stats and removes waitlisted registrations when canceled", async () => {
+  it("returns waitlist stats and removes waitlisted registrations when stopped", async () => {
     const offering = await prisma.courseOffering.findFirstOrThrow({
       where: {
         course: {
@@ -73,7 +73,7 @@ describe("admin dashboard", () => {
       expect.arrayContaining([RegistrationStatus.ACTIVE, RegistrationStatus.WAITLISTED]),
     );
 
-    await cancelOffering("admin-test", offering.id, "测试取消候补");
+    await cancelOffering("admin-test", offering.id, "测试停开候补");
 
     const afterCancel = await getAdminDashboard();
     const canceled = afterCancel.offeringDetails.find((item) => item.id === offering.id);

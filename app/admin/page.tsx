@@ -149,18 +149,18 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                               size="sm"
                               variant="outline"
                             >
-                              关闭
+                              冻结名单
                             </Button>
                           </form>
                           <form action={cancelOfferingAction}>
                             <input name="offeringId" type="hidden" value={stat.id} />
-                            <input name="reason" type="hidden" value="管理员取消开课班" />
+                            <input name="reason" type="hidden" value="管理员停开课程" />
                             <Button
                               disabled={stat.status === "CANCELED"}
                               size="sm"
                               variant="danger"
                             >
-                              取消
+                              停开课程
                             </Button>
                           </form>
                         </div>

@@ -19,6 +19,7 @@ export function offeringStatusLabel(status: OfferingStatus) {
 export function registrationStatusLabel(status: RegistrationStatus) {
   return {
     ACTIVE: "有效",
+    WAITLISTED: "候补",
     DROPPED: "已退课",
     REMOVED: "已移除",
   }[status];

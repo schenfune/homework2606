@@ -25,13 +25,17 @@ enum OfferingStatus {
 
 enum RegistrationStatus {
   ACTIVE
+  WAITLISTED
   DROPPED
   REMOVED
 }
 
 enum OperationType {
   COURSE_SELECTED
+  COURSE_WAITLISTED
   COURSE_DROPPED
+  WAITLIST_PROMOTED
+  WAITLIST_DROPPED
   OFFERING_CLOSED
   OFFERING_CANCELED
   TERM_WINDOW_UPDATED
@@ -218,18 +222,21 @@ model EligibilityRule {
 }
 
 model CourseRegistration {
-  id          String             @id @default(cuid())
-  status      RegistrationStatus @default(ACTIVE)
-  registeredAt DateTime          @default(now())
-  updatedAt   DateTime           @updatedAt
-  studentId   String
-  offeringId  String
-  student     StudentProfile     @relation(fields: [studentId], references: [id])
-  offering    CourseOffering     @relation(fields: [offeringId], references: [id])
+  id               String             @id @default(cuid())
+  status           RegistrationStatus @default(ACTIVE)
+  registeredAt     DateTime           @default(now())
+  waitlistedAt     DateTime?
+  waitlistPosition Int?
+  updatedAt        DateTime           @updatedAt
+  studentId        String
+  offeringId       String
+  student          StudentProfile     @relation(fields: [studentId], references: [id])
+  offering         CourseOffering     @relation(fields: [offeringId], references: [id])
 
   @@unique([studentId, offeringId])
   @@index([studentId, status])
   @@index([offeringId, status])
+  @@index([offeringId, status, waitlistPosition])
 }
 
 model OperationLog {

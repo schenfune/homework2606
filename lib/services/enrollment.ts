@@ -10,6 +10,7 @@ import { prisma } from "@/lib/db/prisma";
 import {
   cacheKeys,
   getJsonCache,
+  safeInvalidateAllEnrollmentCaches,
   safeInvalidateEnrollmentCaches,
   setJsonCache,
 } from "@/lib/services/cache";
@@ -31,6 +32,11 @@ export type CourseRuleCheck = {
   status: RuleCheckStatus;
   detail: string;
 };
+
+const SCHEDULE_OCCUPYING_STATUSES = [
+  RegistrationStatus.ACTIVE,
+  RegistrationStatus.WAITLISTED,
+];
 
 export async function getStudentDashboard(profileId: string) {
   const cached = await getJsonCache<Awaited<ReturnType<typeof loadStudentDashboard>>>(
@@ -80,7 +86,9 @@ async function loadStudentDashboard(profileId: string) {
   const registrations = await prisma.courseRegistration.findMany({
     where: {
       studentId: profileId,
-      status: RegistrationStatus.ACTIVE,
+      status: {
+        in: SCHEDULE_OCCUPYING_STATUSES,
+      },
     },
     include: {
       offering: {
@@ -95,7 +103,7 @@ async function loadStudentDashboard(profileId: string) {
     },
   });
 
-  const activeCourses = registrations
+  const occupiedCourses = registrations
     .filter((registration) => registration.offering.status !== OfferingStatus.CANCELED)
     .map((registration) => ({
       offeringId: registration.offeringId,
@@ -109,7 +117,7 @@ async function loadStudentDashboard(profileId: string) {
       offering,
       student,
       term,
-      activeCourses: activeCourses.filter((course) => course.offeringId !== offering.id),
+      activeCourses: occupiedCourses.filter((course) => course.offeringId !== offering.id),
       ownRegistrationStatus: ownRegistration?.status,
     });
     const reasons = getUnavailableReasons(ruleChecks, ownRegistration?.status);
@@ -129,15 +137,21 @@ async function loadStudentDashboard(profileId: string) {
       ruleChecks,
       unavailableReasons: reasons,
       selected: ownRegistration?.status === RegistrationStatus.ACTIVE,
+      waitlisted: ownRegistration?.status === RegistrationStatus.WAITLISTED,
+      waitlistPosition: ownRegistration?.waitlistPosition,
     };
   });
+
+  const activeRegistrations = registrations.filter(
+    (registration) => registration.status === RegistrationStatus.ACTIVE,
+  );
 
   return {
     student,
     term,
     courses,
     registrations,
-    totalCredits: registrations.reduce(
+    totalCredits: activeRegistrations.reduce(
       (sum, registration) => sum + registration.offering.course.credits,
       0,
     ),
@@ -172,6 +186,8 @@ export async function selectCourse(profileId: string, offeringId: string) {
       throw new Error("选课数据不存在");
     }
 
+    await acquireOfferingLock(tx, offeringId);
+
     const existing = await tx.courseRegistration.findUnique({
       where: {
         studentId_offeringId: {
@@ -181,10 +197,12 @@ export async function selectCourse(profileId: string, offeringId: string) {
       },
     });
 
-    const activeRegistrations = await tx.courseRegistration.findMany({
+    const occupiedRegistrations = await tx.courseRegistration.findMany({
       where: {
         studentId: profileId,
-        status: RegistrationStatus.ACTIVE,
+        status: {
+          in: SCHEDULE_OCCUPYING_STATUSES,
+        },
         offering: {
           status: {
             not: OfferingStatus.CANCELED,
@@ -201,7 +219,7 @@ export async function selectCourse(profileId: string, offeringId: string) {
       },
     });
 
-    const activeCourses = activeRegistrations
+    const occupiedCourses = occupiedRegistrations
       .filter((registration) => registration.offeringId !== offeringId)
       .map((registration) => ({
         offeringId: registration.offeringId,
@@ -213,7 +231,7 @@ export async function selectCourse(profileId: string, offeringId: string) {
       offering,
       student,
       term,
-      activeCourses,
+      activeCourses: occupiedCourses,
       ownRegistrationStatus: existing?.status,
     });
     const reasons = getUnavailableReasons(ruleChecks, existing?.status);
@@ -237,33 +255,72 @@ export async function selectCourse(profileId: string, offeringId: string) {
       },
     });
 
-    if (updated.count !== 1) {
-      throw new Error("课程容量已满");
+    if (updated.count === 1) {
+      const registration = existing
+        ? await tx.courseRegistration.update({
+            where: { id: existing.id },
+            data: {
+              status: RegistrationStatus.ACTIVE,
+              registeredAt: new Date(),
+              waitlistedAt: null,
+              waitlistPosition: null,
+            },
+          })
+        : await tx.courseRegistration.create({
+            data: {
+              studentId: profileId,
+              offeringId,
+              status: RegistrationStatus.ACTIVE,
+            },
+          });
+
+      await tx.operationLog.create({
+        data: {
+          type: OperationType.COURSE_SELECTED,
+          actorRole: Role.STUDENT,
+          actorId: profileId,
+          targetId: offeringId,
+          message: `${student.name}选择${offering.course.name}`,
+        },
+      });
+
+      return registration;
     }
 
-    const registration = existing
-      ? await tx.courseRegistration.update({
-          where: { id: existing.id },
-          data: {
-            status: RegistrationStatus.ACTIVE,
-            registeredAt: new Date(),
-          },
-        })
-      : await tx.courseRegistration.create({
-          data: {
-            studentId: profileId,
-            offeringId,
-            status: RegistrationStatus.ACTIVE,
-          },
-        });
+    const currentOffering = await tx.courseOffering.findUnique({
+      where: { id: offeringId },
+      select: {
+        capacity: true,
+        enrolledCount: true,
+        status: true,
+      },
+    });
+
+    if (!currentOffering || currentOffering.status !== OfferingStatus.PUBLISHED) {
+      throw new Error("课程名单已冻结");
+    }
+
+    if (currentOffering.enrolledCount < currentOffering.capacity) {
+      throw new Error("选课提交冲突，请重试");
+    }
+
+    const registration = await createOrRestoreWaitlistRegistration({
+      tx,
+      existing,
+      profileId,
+      offeringId,
+    });
 
     await tx.operationLog.create({
       data: {
-        type: OperationType.COURSE_SELECTED,
+        type: OperationType.COURSE_WAITLISTED,
         actorRole: Role.STUDENT,
         actorId: profileId,
         targetId: offeringId,
-        message: `${student.name}选择${offering.course.name}`,
+        message: `${student.name}候补${offering.course.name}`,
+        metadata: {
+          waitlistPosition: registration.waitlistPosition,
+        },
       },
     });
 
@@ -288,7 +345,9 @@ export async function dropCourse(profileId: string, registrationId: string) {
       where: {
         id: registrationId,
         studentId: profileId,
-        status: RegistrationStatus.ACTIVE,
+        status: {
+          in: SCHEDULE_OCCUPYING_STATUSES,
+        },
       },
       include: {
         offering: {
@@ -305,6 +364,8 @@ export async function dropCourse(profileId: string, registrationId: string) {
       throw new Error("选课记录不存在");
     }
 
+    await acquireOfferingLock(tx, registration.offeringId);
+
     if (registration.offering.course.category === CourseCategory.REQUIRED) {
       throw new Error("必修课不可退课");
     }
@@ -313,6 +374,28 @@ export async function dropCourse(profileId: string, registrationId: string) {
 
     if (registration.offering.status !== OfferingStatus.PUBLISHED) {
       throw new Error("课程已冻结，不能退课");
+    }
+
+    if (registration.status === RegistrationStatus.WAITLISTED) {
+      await tx.courseRegistration.update({
+        where: { id: registration.id },
+        data: {
+          status: RegistrationStatus.DROPPED,
+          waitlistPosition: null,
+        },
+      });
+
+      await tx.operationLog.create({
+        data: {
+          type: OperationType.WAITLIST_DROPPED,
+          actorRole: Role.STUDENT,
+          actorId: profileId,
+          targetId: registration.offeringId,
+          message: `${registration.student.name}退出${registration.offering.course.name}候补`,
+        },
+      });
+
+      return;
     }
 
     await tx.courseRegistration.update({
@@ -338,9 +421,130 @@ export async function dropCourse(profileId: string, registrationId: string) {
         message: `${registration.student.name}退选${registration.offering.course.name}`,
       },
     });
+
+    await promoteFirstWaitlistedRegistration({
+      tx,
+      offeringId: registration.offeringId,
+      courseName: registration.offering.course.name,
+    });
   });
 
-  await safeInvalidateEnrollmentCaches(profileId);
+  await safeInvalidateAllEnrollmentCaches();
+}
+
+async function createOrRestoreWaitlistRegistration({
+  tx,
+  existing,
+  profileId,
+  offeringId,
+}: {
+  tx: Prisma.TransactionClient;
+  existing: { id: string } | null;
+  profileId: string;
+  offeringId: string;
+}) {
+  const position = await nextWaitlistPosition(tx, offeringId);
+  const now = new Date();
+
+  return existing
+    ? tx.courseRegistration.update({
+        where: { id: existing.id },
+        data: {
+          status: RegistrationStatus.WAITLISTED,
+          waitlistedAt: now,
+          waitlistPosition: position,
+        },
+      })
+    : tx.courseRegistration.create({
+        data: {
+          studentId: profileId,
+          offeringId,
+          status: RegistrationStatus.WAITLISTED,
+          waitlistedAt: now,
+          waitlistPosition: position,
+        },
+      });
+}
+
+async function promoteFirstWaitlistedRegistration({
+  tx,
+  offeringId,
+  courseName,
+}: {
+  tx: Prisma.TransactionClient;
+  offeringId: string;
+  courseName: string;
+}) {
+  const candidate = await tx.courseRegistration.findFirst({
+    where: {
+      offeringId,
+      status: RegistrationStatus.WAITLISTED,
+    },
+    include: {
+      student: true,
+    },
+    orderBy: [
+      { waitlistPosition: "asc" },
+      { waitlistedAt: "asc" },
+      { registeredAt: "asc" },
+    ],
+  });
+
+  if (!candidate) {
+    return;
+  }
+
+  const promoted = await tx.courseRegistration.updateMany({
+    where: {
+      id: candidate.id,
+      status: RegistrationStatus.WAITLISTED,
+    },
+    data: {
+      status: RegistrationStatus.ACTIVE,
+      registeredAt: new Date(),
+      waitlistPosition: null,
+    },
+  });
+
+  if (promoted.count !== 1) {
+    return;
+  }
+
+  await tx.courseOffering.update({
+    where: { id: offeringId },
+    data: {
+      enrolledCount: {
+        increment: 1,
+      },
+    },
+  });
+
+  await tx.operationLog.create({
+    data: {
+      type: OperationType.WAITLIST_PROMOTED,
+      actorRole: Role.STUDENT,
+      actorId: candidate.studentId,
+      targetId: offeringId,
+      message: `${candidate.student.name}递补${courseName}`,
+      metadata: {
+        previousWaitlistPosition: candidate.waitlistPosition,
+      },
+    },
+  });
+}
+
+async function nextWaitlistPosition(tx: Prisma.TransactionClient, offeringId: string) {
+  const aggregate = await tx.courseRegistration.aggregate({
+    where: {
+      offeringId,
+      status: RegistrationStatus.WAITLISTED,
+    },
+    _max: {
+      waitlistPosition: true,
+    },
+  });
+
+  return (aggregate._max.waitlistPosition ?? 0) + 1;
 }
 
 export function buildCourseRuleChecks({
@@ -405,7 +609,8 @@ export function buildCourseRuleChecks({
       status:
         offering.course.category === CourseCategory.REQUIRED
           ? "block"
-          : ownRegistrationStatus === RegistrationStatus.ACTIVE
+          : ownRegistrationStatus === RegistrationStatus.ACTIVE ||
+            ownRegistrationStatus === RegistrationStatus.WAITLISTED
           ? "info"
           : "pass",
       detail:
@@ -413,6 +618,8 @@ export function buildCourseRuleChecks({
           ? "必修锁定"
           : ownRegistrationStatus === RegistrationStatus.ACTIVE
           ? "已入课表"
+          : ownRegistrationStatus === RegistrationStatus.WAITLISTED
+          ? "候补中"
           : "学生可选",
     },
     {
@@ -429,8 +636,10 @@ export function buildCourseRuleChecks({
     {
       code: "CAPACITY",
       label: "容量",
-      status: full ? "block" : "pass",
-      detail: `${offering.enrolledCount}/${offering.capacity}`,
+      status: full ? "info" : "pass",
+      detail: full
+        ? `${offering.enrolledCount}/${offering.capacity} · 可候补`
+        : `${offering.enrolledCount}/${offering.capacity}`,
     },
     {
       code: "TIME_CONFLICT",
@@ -451,6 +660,13 @@ function getUnavailableReasons(
 
   if (ownRegistrationStatus === RegistrationStatus.ACTIVE && !reasons.includes("已选择该课程")) {
     reasons.push("已选择该课程");
+  }
+
+  if (
+    ownRegistrationStatus === RegistrationStatus.WAITLISTED &&
+    !reasons.includes("已加入候补")
+  ) {
+    reasons.push("已加入候补");
   }
 
   return reasons;
@@ -486,9 +702,19 @@ function assertTermOpen(term: { selectionStartsAt: Date; selectionEndsAt: Date }
   }
 }
 
+async function acquireOfferingLock(tx: Prisma.TransactionClient, offeringId: string) {
+  const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
+    SELECT pg_try_advisory_xact_lock(hashtext(${`offering:${offeringId}`})) AS locked
+  `;
+
+  if (!lock?.locked) {
+    throw new Error("课程名单正在更新，请稍后再试");
+  }
+}
+
 async function runSerializableTransaction<T>(
   callback: (tx: Prisma.TransactionClient) => Promise<T>,
-  attempts = 3,
+  attempts = 5,
 ) {
   let lastError: unknown;
 
@@ -522,7 +748,11 @@ function isRetryableTransactionError(error: unknown) {
   }
 
   const message = error instanceof Error ? error.message : "";
-  return message.includes("write conflict") || message.includes("deadlock");
+  return (
+    message.includes("write conflict") ||
+    message.includes("deadlock") ||
+    message.includes("课程名单正在更新")
+  );
 }
 
 function wait(milliseconds: number) {

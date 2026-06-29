@@ -43,7 +43,11 @@ async function loadAdminDashboard() {
                 },
               },
             },
-            orderBy: [{ status: "asc" }, { registeredAt: "asc" }],
+            orderBy: [
+              { status: "asc" },
+              { waitlistPosition: "asc" },
+              { registeredAt: "asc" },
+            ],
           },
         },
         orderBy: [{ course: { courseNo: "asc" } }, { classNo: "asc" }],
@@ -71,6 +75,9 @@ async function loadAdminDashboard() {
       const dropped = offering.registrations.filter(
         (registration) => registration.status === RegistrationStatus.DROPPED,
       ).length;
+      const waitlisted = offering.registrations.filter(
+        (registration) => registration.status === RegistrationStatus.WAITLISTED,
+      ).length;
       const removed = offering.registrations.filter(
         (registration) => registration.status === RegistrationStatus.REMOVED,
       ).length;
@@ -84,6 +91,7 @@ async function loadAdminDashboard() {
         status: offering.status,
         capacity: offering.capacity,
         active,
+        waitlisted,
         dropped,
         removed,
         rate: offering.capacity === 0 ? 0 : Math.round((active / offering.capacity) * 100),
@@ -95,6 +103,9 @@ async function loadAdminDashboard() {
       ).length;
       const dropped = offering.registrations.filter(
         (registration) => registration.status === RegistrationStatus.DROPPED,
+      ).length;
+      const waitlisted = offering.registrations.filter(
+        (registration) => registration.status === RegistrationStatus.WAITLISTED,
       ).length;
       const removed = offering.registrations.filter(
         (registration) => registration.status === RegistrationStatus.REMOVED,
@@ -112,6 +123,7 @@ async function loadAdminDashboard() {
         teacherName: offering.teacherName,
         meetingTimes: offering.meetingTimes,
         active,
+        waitlisted,
         dropped,
         removed,
         rate: offering.capacity === 0 ? 0 : Math.round((active / offering.capacity) * 100),
@@ -200,7 +212,11 @@ export async function cancelOffering(adminId: string, offeringId: string, reason
       include: {
         course: true,
         registrations: {
-          where: { status: RegistrationStatus.ACTIVE },
+          where: {
+            status: {
+              in: [RegistrationStatus.ACTIVE, RegistrationStatus.WAITLISTED],
+            },
+          },
         },
       },
     });
@@ -221,7 +237,9 @@ export async function cancelOffering(adminId: string, offeringId: string, reason
     await tx.courseRegistration.updateMany({
       where: {
         offeringId,
-        status: RegistrationStatus.ACTIVE,
+        status: {
+          in: [RegistrationStatus.ACTIVE, RegistrationStatus.WAITLISTED],
+        },
       },
       data: {
         status: RegistrationStatus.REMOVED,

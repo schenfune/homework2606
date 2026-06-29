@@ -1,0 +1,247 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+enum CourseCategory {
+  REQUIRED
+  MAJOR_ELECTIVE
+  PUBLIC_ELECTIVE
+}
+
+enum OfferingStatus {
+  PUBLISHED
+  CLOSED
+  CANCELED
+}
+
+enum RegistrationStatus {
+  ACTIVE
+  DROPPED
+  REMOVED
+}
+
+enum OperationType {
+  COURSE_SELECTED
+  COURSE_DROPPED
+  OFFERING_CLOSED
+  OFFERING_CANCELED
+  TERM_WINDOW_UPDATED
+  RESULT_EXPORTED
+  RESULT_API_ACCESSED
+}
+
+model User {
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  emailVerified   Boolean   @default(false)
+  image           String?
+  username        String?   @unique
+  displayUsername String?
+  role            Role      @default(STUDENT)
+  profileId       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  accounts        Account[]
+  sessions        Session[]
+
+  @@index([role])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model Department {
+  id       String    @id @default(cuid())
+  code     String    @unique
+  name     String
+  majors   Major[]
+  courses  Course[]
+  students StudentProfile[]
+  eligibilityRules EligibilityRule[]
+}
+
+model Major {
+  id           String           @id @default(cuid())
+  code         String           @unique
+  name         String
+  departmentId String
+  department   Department       @relation(fields: [departmentId], references: [id])
+  students     StudentProfile[]
+  rules        EligibilityRule[]
+
+  @@index([departmentId])
+}
+
+model StudentProfile {
+  id           String               @id @default(cuid())
+  studentNo    String               @unique
+  name         String
+  grade        Int
+  departmentId String
+  majorId      String
+  department   Department           @relation(fields: [departmentId], references: [id])
+  major        Major                @relation(fields: [majorId], references: [id])
+  registrations CourseRegistration[]
+
+  @@index([departmentId, majorId, grade])
+}
+
+model Term {
+  id              String           @id @default(cuid())
+  code            String           @unique
+  name            String
+  startsAt        DateTime
+  endsAt          DateTime
+  selectionStartsAt DateTime
+  selectionEndsAt   DateTime
+  isCurrent       Boolean          @default(false)
+  offerings       CourseOffering[]
+
+  @@index([isCurrent])
+}
+
+model Course {
+  id           String         @id @default(cuid())
+  courseNo     String         @unique
+  name         String
+  credits      Int
+  category     CourseCategory
+  departmentId String
+  department   Department     @relation(fields: [departmentId], references: [id])
+  offerings    CourseOffering[]
+
+  @@index([category])
+  @@index([departmentId])
+}
+
+model CourseOffering {
+  id             String               @id @default(cuid())
+  classNo        String
+  capacity       Int
+  enrolledCount  Int                  @default(0)
+  teacherName    String
+  status         OfferingStatus       @default(PUBLISHED)
+  canceledReason String?
+  termId         String
+  courseId       String
+  term           Term                 @relation(fields: [termId], references: [id])
+  course         Course               @relation(fields: [courseId], references: [id])
+  meetingTimes   MeetingTime[]
+  eligibilityRules EligibilityRule[]
+  registrations  CourseRegistration[]
+
+  @@unique([termId, courseId, classNo])
+  @@index([termId, status])
+  @@index([courseId])
+}
+
+model MeetingTime {
+  id          String         @id @default(cuid())
+  weekday     Int
+  startPeriod Int
+  endPeriod   Int
+  startWeek   Int
+  endWeek     Int
+  offeringId  String
+  offering    CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+
+  @@index([offeringId])
+}
+
+model EligibilityRule {
+  id           String         @id @default(cuid())
+  grade        Int
+  departmentId String
+  majorId      String
+  offeringId   String
+  department   Department     @relation(fields: [departmentId], references: [id])
+  major        Major          @relation(fields: [majorId], references: [id])
+  offering     CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+
+  @@unique([offeringId, majorId, grade])
+  @@index([departmentId, majorId, grade])
+}
+
+model CourseRegistration {
+  id          String             @id @default(cuid())
+  status      RegistrationStatus @default(ACTIVE)
+  registeredAt DateTime          @default(now())
+  updatedAt   DateTime           @updatedAt
+  studentId   String
+  offeringId  String
+  student     StudentProfile     @relation(fields: [studentId], references: [id])
+  offering    CourseOffering     @relation(fields: [offeringId], references: [id])
+
+  @@unique([studentId, offeringId])
+  @@index([studentId, status])
+  @@index([offeringId, status])
+}
+
+model OperationLog {
+  id          String        @id @default(cuid())
+  type        OperationType
+  actorRole   Role
+  actorId     String?
+  targetId    String?
+  message     String
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+
+  @@index([type, createdAt])
+  @@index([actorRole, createdAt])
+}

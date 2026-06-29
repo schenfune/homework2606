@@ -34,7 +34,17 @@ async function loadAdminDashboard() {
         include: {
           course: true,
           meetingTimes: true,
-          registrations: true,
+          registrations: {
+            include: {
+              student: {
+                include: {
+                  department: true,
+                  major: true,
+                },
+              },
+            },
+            orderBy: [{ status: "asc" }, { registeredAt: "asc" }],
+          },
         },
         orderBy: [{ course: { courseNo: "asc" } }, { classNo: "asc" }],
       },
@@ -77,6 +87,36 @@ async function loadAdminDashboard() {
         dropped,
         removed,
         rate: offering.capacity === 0 ? 0 : Math.round((active / offering.capacity) * 100),
+      };
+    }),
+    offeringDetails: term.offerings.map((offering) => {
+      const active = offering.registrations.filter(
+        (registration) => registration.status === RegistrationStatus.ACTIVE,
+      ).length;
+      const dropped = offering.registrations.filter(
+        (registration) => registration.status === RegistrationStatus.DROPPED,
+      ).length;
+      const removed = offering.registrations.filter(
+        (registration) => registration.status === RegistrationStatus.REMOVED,
+      ).length;
+
+      return {
+        id: offering.id,
+        courseNo: offering.course.courseNo,
+        name: offering.course.name,
+        classNo: offering.classNo,
+        category: offering.course.category,
+        status: offering.status,
+        capacity: offering.capacity,
+        enrolledCount: offering.enrolledCount,
+        teacherName: offering.teacherName,
+        meetingTimes: offering.meetingTimes,
+        active,
+        dropped,
+        removed,
+        rate: offering.capacity === 0 ? 0 : Math.round((active / offering.capacity) * 100),
+        registrations: offering.registrations,
+        logs: logs.filter((log) => log.targetId === offering.id),
       };
     }),
     logs,

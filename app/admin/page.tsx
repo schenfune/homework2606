@@ -1,9 +1,20 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetOverlay,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   Table,
   TableBody,
@@ -18,8 +29,10 @@ import {
   dateTimeLabel,
   datetimeLocalValue,
   offeringStatusLabel,
+  registrationStatusLabel,
 } from "@/lib/format";
 import { getAdminDashboard } from "@/lib/services/admin";
+import { MeetingTimeList } from "@/components/student/course-display";
 import {
   cancelOfferingAction,
   closeOfferingAction,
@@ -28,9 +41,19 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminPage() {
+type AdminPageProps = {
+  searchParams?: Promise<{
+    detail?: string;
+  }>;
+};
+
+export default async function AdminPage({ searchParams }: AdminPageProps) {
+  const params = await searchParams;
   const { user } = await requireRole("ADMIN");
   const dashboard = await getAdminDashboard();
+  const selectedOffering = dashboard.offeringDetails.find(
+    (offering) => offering.id === params?.detail,
+  );
 
   return (
     <main className="min-h-screen bg-zinc-50">
@@ -110,6 +133,13 @@ export default async function AdminPage() {
                       <TableCell>{stat.removed}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-2">
+                          <Link
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                            href={`/admin?detail=${stat.id}`}
+                            scroll={false}
+                          >
+                            详情
+                          </Link>
                           <form action={closeOfferingAction}>
                             <input name="offeringId" type="hidden" value={stat.id} />
                             <Button
@@ -177,6 +207,164 @@ export default async function AdminPage() {
           </CardContent>
         </Card>
       </div>
+      <AdminOfferingSheet offering={selectedOffering} />
     </main>
+  );
+}
+
+function AdminOfferingSheet({
+  offering,
+}: {
+  offering?: Awaited<ReturnType<typeof getAdminDashboard>>["offeringDetails"][number];
+}) {
+  return (
+    <Sheet open={Boolean(offering)}>
+      <SheetOverlay href="/admin" />
+      {offering ? (
+        <SheetContent className="max-w-3xl">
+          <SheetHeader>
+            <div className="flex flex-wrap gap-2">
+              <Badge>{categoryLabel(offering.category)}</Badge>
+              <Badge variant={offering.status === "PUBLISHED" ? "success" : "warning"}>
+                {offeringStatusLabel(offering.status)}
+              </Badge>
+            </div>
+            <SheetTitle>
+              {offering.courseNo} {offering.name}
+            </SheetTitle>
+          </SheetHeader>
+          <SheetBody>
+            <div className="grid gap-3 sm:grid-cols-4">
+              <MetricBox label="容量" value={`${offering.enrolledCount}/${offering.capacity}`} />
+              <MetricBox label="有效" value={`${offering.active}`} />
+              <MetricBox label="退课" value={`${offering.dropped}`} />
+              <MetricBox label="移除" value={`${offering.removed}`} />
+            </div>
+            <Progress value={offering.rate} />
+            <DetailGrid
+              items={[
+                ["班号", `${offering.classNo}班`],
+                ["教师", offering.teacherName],
+                ["选课率", `${offering.rate}%`],
+              ]}
+            />
+            <div>
+              <div className="mb-2 text-sm font-medium text-zinc-950">时间</div>
+              {offering.meetingTimes.length ? (
+                <MeetingTimeList meetingTimes={offering.meetingTimes} />
+              ) : (
+                <Empty>未排课</Empty>
+              )}
+            </div>
+            <RegistrationTable registrations={offering.registrations} />
+            <OfferingLogTable logs={offering.logs} />
+          </SheetBody>
+        </SheetContent>
+      ) : null}
+    </Sheet>
+  );
+}
+
+function RegistrationTable({
+  registrations,
+}: {
+  registrations: NonNullable<
+    Awaited<ReturnType<typeof getAdminDashboard>>["offeringDetails"][number]
+  >["registrations"];
+}) {
+  return (
+    <div>
+      <div className="mb-2 text-sm font-medium text-zinc-950">名单</div>
+      {registrations.length ? (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>学号</TableHead>
+              <TableHead>姓名</TableHead>
+              <TableHead>专业</TableHead>
+              <TableHead>年级</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>登记时间</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {registrations.map((registration) => (
+              <TableRow key={registration.id}>
+                <TableCell>{registration.student.studentNo}</TableCell>
+                <TableCell>{registration.student.name}</TableCell>
+                <TableCell>{registration.student.major.name}</TableCell>
+                <TableCell>{registration.student.grade}</TableCell>
+                <TableCell>
+                  <Badge variant={registration.status === "ACTIVE" ? "success" : "secondary"}>
+                    {registrationStatusLabel(registration.status)}
+                  </Badge>
+                </TableCell>
+                <TableCell>{dateTimeLabel(registration.registeredAt)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <Empty>暂无名单</Empty>
+      )}
+    </div>
+  );
+}
+
+function OfferingLogTable({
+  logs,
+}: {
+  logs: Awaited<ReturnType<typeof getAdminDashboard>>["logs"];
+}) {
+  return (
+    <div>
+      <div className="mb-2 text-sm font-medium text-zinc-950">日志</div>
+      {logs.length ? (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>时间</TableHead>
+              <TableHead>类型</TableHead>
+              <TableHead>角色</TableHead>
+              <TableHead>内容</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {logs.map((log) => (
+              <TableRow key={log.id}>
+                <TableCell>{dateTimeLabel(log.createdAt)}</TableCell>
+                <TableCell>{log.type}</TableCell>
+                <TableCell>{log.actorRole}</TableCell>
+                <TableCell>{log.message}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <Empty>暂无日志</Empty>
+      )}
+    </div>
+  );
+}
+
+function MetricBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 p-3">
+      <div className="text-xs text-zinc-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-zinc-950">{value}</div>
+    </div>
+  );
+}
+
+function DetailGrid({ items }: { items: [string, string][] }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      {items.map(([label, value]) => (
+        <div className="rounded-lg border border-zinc-200 p-3" key={label}>
+          <div className="text-xs text-zinc-500">{label}</div>
+          {value ? <div className="mt-1 text-sm font-medium text-zinc-950">{value}</div> : null}
+        </div>
+      ))}
+    </div>
   );
 }

@@ -82,7 +82,14 @@ export function setup() {
   }
 
   const students = mode === "flash" ? targetConfig.students.slice(0, vus) : [targetConfig.students[0]];
-  const sessions = students.map((student) => loginStudent(student));
+  const sessions = students.map((student) =>
+    student.cookie
+      ? {
+          studentNo: student.studentNo,
+          cookie: student.cookie,
+        }
+      : loginStudent(student),
+  );
 
   return {
     mode,

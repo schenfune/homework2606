@@ -1,4 +1,6 @@
 import { CourseCategory, OfferingStatus, Prisma, Role } from "@prisma/client";
+import { makeSignature } from "better-auth/crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db/prisma";
@@ -12,11 +14,14 @@ const capacity = Number(process.env.LOAD_COURSE_CAPACITY || 30);
 const password = process.env.LOAD_STUDENT_PASSWORD || "12345678";
 const courseNo = process.env.LOAD_COURSE_NO || "LT101";
 const studentPrefix = process.env.LOAD_STUDENT_PREFIX || "LT2026";
+const authSecret =
+  process.env.BETTER_AUTH_SECRET ?? "course-dev-secret-change-me-before-production-2026";
 
 type LoadStudent = {
   studentNo: string;
   email: string;
   password: string;
+  cookie: string;
 };
 
 async function main() {
@@ -186,6 +191,7 @@ async function main() {
 
       const students: LoadStudent[] = [];
       const passwordHash = await hashPassword(password);
+      const sessionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
       for (let index = 1; index <= studentCount; index += 1) {
         const studentNo = `${studentPrefix}${String(index).padStart(4, "0")}`;
@@ -246,10 +252,21 @@ async function main() {
             password: passwordHash,
           },
         });
+        const sessionToken = randomBytes(32).toString("hex");
+        const signedSessionToken = await signSessionToken(sessionToken);
+
+        await tx.session.create({
+          data: {
+            token: sessionToken,
+            expiresAt: sessionExpiresAt,
+            userId: user.id,
+          },
+        });
         students.push({
           studentNo,
           email,
           password,
+          cookie: `better-auth.session_token=${signedSessionToken}`,
         });
       }
 
@@ -356,6 +373,10 @@ async function clearOldLoadArtifacts() {
       "load-test-verification.md",
     ].map((fileName) => rm(`${artifactDir}/${fileName}`, { force: true })),
   );
+}
+
+async function signSessionToken(token: string) {
+  return `${token}.${await makeSignature(token, authSecret)}`;
 }
 
 main()

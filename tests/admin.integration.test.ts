@@ -45,4 +45,50 @@ describe("admin dashboard", () => {
       ]),
     );
   });
+
+  it("returns waitlist stats and removes waitlisted registrations when canceled", async () => {
+    const offering = await prisma.courseOffering.findFirstOrThrow({
+      where: {
+        course: {
+          courseNo: "GE204",
+        },
+      },
+    });
+    const studentA = await prisma.studentProfile.findUniqueOrThrow({
+      where: { studentNo: "20240001" },
+    });
+    const studentB = await prisma.studentProfile.findUniqueOrThrow({
+      where: { studentNo: "20240002" },
+    });
+
+    await selectCourse(studentA.id, offering.id);
+    await selectCourse(studentB.id, offering.id);
+
+    const dashboard = await getAdminDashboard();
+    const detail = dashboard.offeringDetails.find((item) => item.id === offering.id);
+
+    expect(detail?.active).toBe(1);
+    expect(detail?.waitlisted).toBe(1);
+    expect(detail?.registrations.map((registration) => registration.status)).toEqual(
+      expect.arrayContaining([RegistrationStatus.ACTIVE, RegistrationStatus.WAITLISTED]),
+    );
+
+    await cancelOffering("admin-test", offering.id, "测试取消候补");
+
+    const afterCancel = await getAdminDashboard();
+    const canceled = afterCancel.offeringDetails.find((item) => item.id === offering.id);
+
+    expect(canceled?.removed).toBe(2);
+    expect(
+      canceled?.registrations.every(
+        (registration) => registration.status === RegistrationStatus.REMOVED,
+      ),
+    ).toBe(true);
+    expect(canceled?.logs.map((log) => log.type)).toEqual(
+      expect.arrayContaining([
+        OperationType.COURSE_WAITLISTED,
+        OperationType.OFFERING_CANCELED,
+      ]),
+    );
+  });
 });

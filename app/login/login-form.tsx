@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth/client";
@@ -40,7 +40,6 @@ export function LoginForm() {
     <Card className="w-full max-w-sm">
       <CardHeader>
         <CardTitle>校园统一身份认证</CardTitle>
-        <CardDescription>使用学号或工号登录选课子系统</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={onSubmit}>
@@ -68,10 +67,6 @@ export function LoginForm() {
             {pending ? "登录中" : "登录"}
           </Button>
         </form>
-        <div className="mt-4 rounded-md bg-zinc-50 p-3 text-xs leading-6 text-zinc-500">
-          <div>学生演示账号：20240001 / 12345678</div>
-          <div>管理员演示账号：admin001 / 12345678</div>
-        </div>
       </CardContent>
     </Card>
   );

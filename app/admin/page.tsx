@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -47,7 +47,6 @@ export default async function AdminPage() {
           <Card>
             <CardHeader>
               <CardTitle>选课开放期</CardTitle>
-              <CardDescription>管理员只管理选课窗口，不维护课程基础库</CardDescription>
             </CardHeader>
             <CardContent>
               <form action={updateTermWindowAction} className="space-y-4">
@@ -77,10 +76,6 @@ export default async function AdminPage() {
           <Card>
             <CardHeader>
               <CardTitle>课程维度统计</CardTitle>
-              <CardDescription>
-                当前开放期：{dateTimeLabel(dashboard.term.selectionStartsAt)} 至{" "}
-                {dateTimeLabel(dashboard.term.selectionEndsAt)}
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -157,7 +152,6 @@ export default async function AdminPage() {
         <Card>
           <CardHeader>
             <CardTitle>操作日志</CardTitle>
-            <CardDescription>只读日志用于问题追踪和报告中的质量属性说明</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -166,7 +160,7 @@ export default async function AdminPage() {
                   <TableHead>时间</TableHead>
                   <TableHead>类型</TableHead>
                   <TableHead>角色</TableHead>
-                  <TableHead>说明</TableHead>
+                  <TableHead>内容</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

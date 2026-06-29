@@ -31,6 +31,8 @@ pnpm add -D prisma tsx vitest
 
 Better Auth在本地开发中使用显式默认`baseURL`和开发密钥，避免构建阶段使用库内置默认值。正式部署时必须配置`BETTER_AUTH_URL`和足够长的`BETTER_AUTH_SECRET`。
 
+Prisma 7的PostgreSQL适配器无法反序列化`pg_advisory_xact_lock`返回的`void`列。选退课事务已改用`pg_try_advisory_xact_lock`返回布尔值，获取不到同一学生锁时直接提示稍后再试。
+
 由于用户要求不直接编辑依赖安装结果，当前没有在`package.json`中添加脚本。依赖安装后，可通过`pnpm exec prisma validate`、`pnpm exec prisma generate`、`pnpm exec tsx prisma/seed.ts`、`pnpm exec vitest run`等命令运行。
 
 ## 当前测试设计
@@ -40,3 +42,7 @@ Better Auth在本地开发中使用显式默认`baseURL`和开发密钥，避免
 ## 已实现代码概览
 
 已添加Prisma领域模型、Better Auth认证配置、scrypt密码哈希、Seed演示数据、学生选课服务、管理员管理服务、Redis缓存限流、学生端页面、管理员端页面、CSV导出、结果API、课表冲突单元测试和k6压测脚本。当前`package.json`未记录新增依赖，需用户手动安装依赖后再运行校验。
+
+## 学生界面重构
+
+学生端已改为顶部摘要、选课和课表标签页、课程表格、课程详情抽屉。规则说明不再以段落出现在页面中，改用短状态标签、容量进度、禁用按钮和悬浮提示表达。登录页和管理员页也删除了明显的报告口吻说明文字。

@@ -126,7 +126,13 @@ async function loadStudentDashboard(profileId: string) {
 export async function selectCourse(profileId: string, offeringId: string) {
   const registration = await prisma.$transaction(
     async (tx) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${profileId}))`;
+      const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
+        SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
+      `;
+
+      if (!lock?.locked) {
+        throw new Error("同一学生正在提交选课请求，请稍后再试");
+      }
 
       const [student, term, offering] = await Promise.all([
         tx.studentProfile.findUnique({
@@ -245,7 +251,13 @@ export async function selectCourse(profileId: string, offeringId: string) {
 
 export async function dropCourse(profileId: string, registrationId: string) {
   await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${profileId}))`;
+    const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
+      SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
+    `;
+
+    if (!lock?.locked) {
+      throw new Error("同一学生正在提交退课请求，请稍后再试");
+    }
 
     const registration = await tx.courseRegistration.findFirst({
       where: {

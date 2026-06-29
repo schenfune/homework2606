@@ -18,7 +18,9 @@ export async function updateTermWindowAction(formData: FormData) {
     selectionStartsAt,
     selectionEndsAt,
   });
-  revalidatePath("/admin");
+  revalidatePath("/admin/window");
+  revalidatePath("/admin/stats");
+  revalidatePath("/admin/logs");
 }
 
 export async function closeOfferingAction(formData: FormData) {
@@ -26,7 +28,8 @@ export async function closeOfferingAction(formData: FormData) {
   const offeringId = String(formData.get("offeringId") ?? "");
 
   await closeOffering(user.id, offeringId);
-  revalidatePath("/admin");
+  revalidatePath("/admin/stats");
+  revalidatePath("/admin/logs");
 }
 
 export async function cancelOfferingAction(formData: FormData) {
@@ -35,5 +38,6 @@ export async function cancelOfferingAction(formData: FormData) {
   const reason = String(formData.get("reason") ?? "");
 
   await cancelOffering(user.id, offeringId, reason);
-  revalidatePath("/admin");
+  revalidatePath("/admin/stats");
+  revalidatePath("/admin/logs");
 }

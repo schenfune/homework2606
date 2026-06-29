@@ -32,7 +32,7 @@ export function LoginForm() {
       return;
     }
 
-    router.push(campusId.startsWith("admin") ? "/admin" : "/student");
+    router.push(campusId.startsWith("admin") ? "/admin/stats" : "/student");
     router.refresh();
   }
 

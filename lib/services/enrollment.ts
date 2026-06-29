@@ -124,133 +124,130 @@ async function loadStudentDashboard(profileId: string) {
 }
 
 export async function selectCourse(profileId: string, offeringId: string) {
-  const registration = await prisma.$transaction(
-    async (tx) => {
-      const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
-        SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
-      `;
+  const registration = await runSerializableTransaction(async (tx) => {
+    const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
+      SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
+    `;
 
-      if (!lock?.locked) {
-        throw new Error("同一学生正在提交选课请求，请稍后再试");
-      }
+    if (!lock?.locked) {
+      throw new Error("同一学生正在提交选课请求，请稍后再试");
+    }
 
-      const [student, term, offering] = await Promise.all([
-        tx.studentProfile.findUnique({
-          where: { id: profileId },
-          include: { department: true, major: true },
-        }),
-        tx.term.findFirst({ where: { isCurrent: true } }),
-        tx.courseOffering.findUnique({
-          where: { id: offeringId },
+    const student = await tx.studentProfile.findUnique({
+      where: { id: profileId },
+      include: { department: true, major: true },
+    });
+    const term = await tx.term.findFirst({ where: { isCurrent: true } });
+    const offering = await tx.courseOffering.findUnique({
+      where: { id: offeringId },
+      include: {
+        course: true,
+        meetingTimes: true,
+        eligibilityRules: true,
+      },
+    });
+
+    if (!student || !term || !offering) {
+      throw new Error("选课数据不存在");
+    }
+
+    const existing = await tx.courseRegistration.findUnique({
+      where: {
+        studentId_offeringId: {
+          studentId: profileId,
+          offeringId,
+        },
+      },
+    });
+
+    const activeRegistrations = await tx.courseRegistration.findMany({
+      where: {
+        studentId: profileId,
+        status: RegistrationStatus.ACTIVE,
+        offering: {
+          status: {
+            not: OfferingStatus.CANCELED,
+          },
+        },
+      },
+      include: {
+        offering: {
           include: {
             course: true,
             meetingTimes: true,
-            eligibilityRules: true,
           },
-        }),
-      ]);
+        },
+      },
+    });
 
-      if (!student || !term || !offering) {
-        throw new Error("选课数据不存在");
-      }
+    const reasons = getUnavailableReasons({
+      offering,
+      student,
+      term,
+      activeSlots: activeRegistrations.flatMap(
+        (registration) => registration.offering.meetingTimes,
+      ),
+      ownRegistrationStatus: existing?.status,
+    });
 
-      const existing = await tx.courseRegistration.findUnique({
-        where: {
-          studentId_offeringId: {
+    if (reasons.length > 0) {
+      throw new Error(reasons[0]);
+    }
+
+    const updated = await tx.courseOffering.updateMany({
+      where: {
+        id: offeringId,
+        status: OfferingStatus.PUBLISHED,
+        enrolledCount: {
+          lt: offering.capacity,
+        },
+      },
+      data: {
+        enrolledCount: {
+          increment: 1,
+        },
+      },
+    });
+
+    if (updated.count !== 1) {
+      throw new Error("课程容量已满");
+    }
+
+    const registration = existing
+      ? await tx.courseRegistration.update({
+          where: { id: existing.id },
+          data: {
+            status: RegistrationStatus.ACTIVE,
+            registeredAt: new Date(),
+          },
+        })
+      : await tx.courseRegistration.create({
+          data: {
             studentId: profileId,
             offeringId,
+            status: RegistrationStatus.ACTIVE,
           },
-        },
-      });
+        });
 
-      const activeRegistrations = await tx.courseRegistration.findMany({
-        where: {
-          studentId: profileId,
-          status: RegistrationStatus.ACTIVE,
-          offering: {
-            status: {
-              not: OfferingStatus.CANCELED,
-            },
-          },
-        },
-        include: {
-          offering: {
-            include: {
-              course: true,
-              meetingTimes: true,
-            },
-          },
-        },
-      });
+    await tx.operationLog.create({
+      data: {
+        type: OperationType.COURSE_SELECTED,
+        actorRole: Role.STUDENT,
+        actorId: profileId,
+        targetId: offeringId,
+        message: `${student.name}选择${offering.course.name}`,
+      },
+    });
 
-      const reasons = getUnavailableReasons({
-        offering,
-        student,
-        term,
-        activeSlots: activeRegistrations.flatMap((registration) => registration.offering.meetingTimes),
-        ownRegistrationStatus: existing?.status,
-      });
-
-      if (reasons.length > 0) {
-        throw new Error(reasons[0]);
-      }
-
-      const updated = await tx.courseOffering.updateMany({
-        where: {
-          id: offeringId,
-          status: OfferingStatus.PUBLISHED,
-          enrolledCount: {
-            lt: offering.capacity,
-          },
-        },
-        data: {
-          enrolledCount: {
-            increment: 1,
-          },
-        },
-      });
-
-      if (updated.count !== 1) {
-        throw new Error("课程容量已满");
-      }
-
-      const registration = existing
-        ? await tx.courseRegistration.update({
-            where: { id: existing.id },
-            data: {
-              status: RegistrationStatus.ACTIVE,
-              registeredAt: new Date(),
-            },
-          })
-        : await tx.courseRegistration.create({
-            data: {
-              studentId: profileId,
-              offeringId,
-              status: RegistrationStatus.ACTIVE,
-            },
-          });
-
-      await tx.operationLog.create({
-        data: {
-          type: OperationType.COURSE_SELECTED,
-          actorRole: Role.STUDENT,
-          actorId: profileId,
-          targetId: offeringId,
-          message: `${student.name}选择${offering.course.name}`,
-        },
-      });
-
-      return registration;
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+    return registration;
+  });
 
   await safeInvalidateEnrollmentCaches(profileId);
   return registration;
 }
 
 export async function dropCourse(profileId: string, registrationId: string) {
-  await prisma.$transaction(async (tx) => {
+  await runSerializableTransaction(async (tx) => {
     const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
       SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
     `;
@@ -313,7 +310,6 @@ export async function dropCourse(profileId: string, registrationId: string) {
         message: `${registration.student.name}退选${registration.offering.course.name}`,
       },
     });
-
   });
 
   await safeInvalidateEnrollmentCaches(profileId);
@@ -399,4 +395,49 @@ function assertTermOpen(term: { selectionStartsAt: Date; selectionEndsAt: Date }
   if (!isTermOpen(term)) {
     throw new Error("不在选课开放期");
   }
+}
+
+async function runSerializableTransaction<T>(
+  callback: (tx: Prisma.TransactionClient) => Promise<T>,
+  attempts = 3,
+) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await prisma.$transaction(callback, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryableTransactionError(error) || attempt === attempts) {
+        throw error;
+      }
+
+      await wait(attempt * 25);
+    }
+  }
+
+  throw lastError;
+}
+
+function isRetryableTransactionError(error: unknown) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "P2034"
+  ) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : "";
+  return message.includes("write conflict") || message.includes("deadlock");
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }

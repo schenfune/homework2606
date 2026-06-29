@@ -67,7 +67,41 @@ export function LoginForm() {
             {pending ? "登录中" : "登录"}
           </Button>
         </form>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <AccountButton
+            label="学生"
+            onClick={() => {
+              setCampusId("20240001");
+              setPassword("12345678");
+            }}
+          />
+          <AccountButton
+            label="管理员"
+            onClick={() => {
+              setCampusId("admin001");
+              setPassword("12345678");
+            }}
+          />
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function AccountButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
   );
 }

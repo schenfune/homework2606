@@ -5,12 +5,13 @@ import {
   RegistrationStatus,
   Role,
 } from "@prisma/client";
+import { pathToFileURL } from "node:url";
 import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db/prisma";
 
 const demoPassword = "12345678";
 
-async function main() {
+export async function seedDemoData() {
   await prisma.$transaction(async (tx) => {
     await tx.operationLog.deleteMany();
     await tx.courseRegistration.deleteMany();
@@ -345,12 +346,14 @@ async function createOffering({
   });
 }
 
-main()
-  .then(async () => {
-    await prisma.$disconnect();
-  })
-  .catch(async (error) => {
-    console.error(error);
-    await prisma.$disconnect();
-    process.exit(1);
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  seedDemoData()
+    .then(async () => {
+      await prisma.$disconnect();
+    })
+    .catch(async (error) => {
+      console.error(error);
+      await prisma.$disconnect();
+      process.exit(1);
+    });
+}

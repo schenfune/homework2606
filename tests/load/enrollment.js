@@ -148,6 +148,8 @@ function loginStudent(student) {
     {
       headers: {
         "content-type": "application/json",
+        origin: baseUrl,
+        referer: `${baseUrl}/login`,
       },
       tags: {
         mode,

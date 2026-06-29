@@ -1,7 +1,7 @@
 import { CourseCategory, RegistrationStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db/prisma";
-import { selectCourse } from "@/lib/services/enrollment";
+import { getStudentDashboard, selectCourse } from "@/lib/services/enrollment";
 import { seedDemoData } from "@/prisma/seed";
 
 describe("enrollment service", () => {
@@ -103,6 +103,43 @@ describe("enrollment service", () => {
     expect(successful).toHaveLength(1);
     expect(activeCount).toBe(1);
     expect(updated.enrolledCount).toBe(1);
+  });
+
+  it("returns rule checks for selectable and conflicting courses", async () => {
+    const student = await prisma.studentProfile.findUniqueOrThrow({
+      where: { studentNo: "20240001" },
+    });
+
+    const dashboard = await getStudentDashboard(student.id);
+    const selectable = dashboard.courses.find((course) => course.courseNo === "SE301");
+    const conflicting = dashboard.courses.find((course) => course.courseNo === "SE302");
+
+    expect(selectable?.ruleChecks.every((check) => check.status !== "block")).toBe(true);
+    expect(
+      conflicting?.ruleChecks.find((check) => check.code === "TIME_CONFLICT")?.status,
+    ).toBe("block");
+  });
+
+  it("marks required and full courses in rule checks", async () => {
+    const { studentId, offeringId } = await fixture("20240001", "SE301");
+    await prisma.courseOffering.update({
+      where: { id: offeringId },
+      data: {
+        capacity: 0,
+        enrolledCount: 0,
+      },
+    });
+
+    const dashboard = await getStudentDashboard(studentId);
+    const required = dashboard.courses.find((course) => course.courseNo === "SE101");
+    const full = dashboard.courses.find((course) => course.courseNo === "SE301");
+
+    expect(
+      required?.ruleChecks.find((check) => check.code === "COURSE_CATEGORY")?.status,
+    ).toBe("block");
+    expect(full?.ruleChecks.find((check) => check.code === "CAPACITY")?.status).toBe(
+      "block",
+    );
   });
 });
 

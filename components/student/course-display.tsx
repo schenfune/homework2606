@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip } from "@/components/ui/tooltip";
 import { categoryLabel, offeringStatusLabel } from "@/lib/format";
+import type { CourseRuleCheck } from "@/lib/services/enrollment";
 import { formatMeetingTime, type MeetingSlot } from "@/lib/services/schedule";
 import { selectCourseAction } from "@/app/student/actions";
 
@@ -20,6 +21,7 @@ export type CourseListItem = {
   enrolledCount: number;
   status: OfferingStatus;
   meetingTimes: MeetingSlot[];
+  ruleChecks: CourseRuleCheck[];
   unavailableReasons: string[];
   selected: boolean;
 };

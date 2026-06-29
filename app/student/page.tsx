@@ -275,6 +275,7 @@ function CourseSheet({
               <div className="mb-2 text-sm font-medium text-zinc-950">时间</div>
               <MeetingTimeList meetingTimes={course.meetingTimes} />
             </div>
+            <RuleCheckTable checks={course.ruleChecks} />
             <div className="flex items-center justify-between rounded-lg border border-zinc-200 p-3">
               <CourseStatusBadges course={course} />
               <Tooltip content={course.unavailableReasons.length ? getTooltipContent(course) : undefined}>
@@ -288,6 +289,43 @@ function CourseSheet({
       ) : null}
     </Sheet>
   );
+}
+
+function RuleCheckTable({ checks }: { checks: CourseListItem["ruleChecks"] }) {
+  return (
+    <div>
+      <div className="mb-2 text-sm font-medium text-zinc-950">规则</div>
+      <Table>
+        <TableBody>
+          {checks.map((check) => (
+            <TableRow key={check.code}>
+              <TableCell className="w-24 text-xs text-zinc-500">{check.label}</TableCell>
+              <TableCell>
+                <Badge variant={ruleCheckVariant(check.status)}>
+                  {ruleCheckStatusLabel(check.status)}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-right text-xs text-zinc-500">
+                {check.detail}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function ruleCheckVariant(status: CourseListItem["ruleChecks"][number]["status"]) {
+  if (status === "pass") return "success";
+  if (status === "block") return "warning";
+  return "secondary";
+}
+
+function ruleCheckStatusLabel(status: CourseListItem["ruleChecks"][number]["status"]) {
+  if (status === "pass") return "通过";
+  if (status === "block") return "受限";
+  return "已选";
 }
 
 function DetailGrid({ items }: { items: [string, string][] }) {

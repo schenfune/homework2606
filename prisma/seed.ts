@@ -8,6 +8,7 @@ import {
 import { pathToFileURL } from "node:url";
 import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db/prisma";
+import { safeInvalidateAllEnrollmentCaches } from "../lib/services/cache";
 
 const demoPassword = "12345678";
 
@@ -266,6 +267,8 @@ export async function seedDemoData() {
       },
     });
   });
+
+  await safeInvalidateAllEnrollmentCaches();
 }
 
 async function createAuthUser({

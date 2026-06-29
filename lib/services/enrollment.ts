@@ -15,6 +15,23 @@ import {
 } from "@/lib/services/cache";
 import { hasMeetingConflict } from "@/lib/services/schedule";
 
+export type RuleCheckCode =
+  | "TERM_WINDOW"
+  | "OFFERING_STATUS"
+  | "COURSE_CATEGORY"
+  | "ELIGIBILITY"
+  | "CAPACITY"
+  | "TIME_CONFLICT";
+
+export type RuleCheckStatus = "pass" | "block" | "info";
+
+export type CourseRuleCheck = {
+  code: RuleCheckCode;
+  label: string;
+  status: RuleCheckStatus;
+  detail: string;
+};
+
 export async function getStudentDashboard(profileId: string) {
   const cached = await getJsonCache<Awaited<ReturnType<typeof loadStudentDashboard>>>(
     cacheKeys.courseList(profileId),
@@ -78,21 +95,24 @@ async function loadStudentDashboard(profileId: string) {
     },
   });
 
-  const activeSlots = registrations.flatMap((registration) =>
-    registration.offering.status === OfferingStatus.CANCELED
-      ? []
-      : registration.offering.meetingTimes,
-  );
+  const activeCourses = registrations
+    .filter((registration) => registration.offering.status !== OfferingStatus.CANCELED)
+    .map((registration) => ({
+      offeringId: registration.offeringId,
+      courseName: registration.offering.course.name,
+      meetingTimes: registration.offering.meetingTimes,
+    }));
 
   const courses = term.offerings.map((offering) => {
     const ownRegistration = offering.registrations[0];
-    const reasons = getUnavailableReasons({
+    const ruleChecks = buildCourseRuleChecks({
       offering,
       student,
       term,
-      activeSlots: activeSlots.filter((slot) => slot.offeringId !== offering.id),
+      activeCourses: activeCourses.filter((course) => course.offeringId !== offering.id),
       ownRegistrationStatus: ownRegistration?.status,
     });
+    const reasons = getUnavailableReasons(ruleChecks, ownRegistration?.status);
 
     return {
       id: offering.id,
@@ -106,6 +126,7 @@ async function loadStudentDashboard(profileId: string) {
       enrolledCount: offering.enrolledCount,
       status: offering.status,
       meetingTimes: offering.meetingTimes,
+      ruleChecks,
       unavailableReasons: reasons,
       selected: ownRegistration?.status === RegistrationStatus.ACTIVE,
     };
@@ -180,15 +201,22 @@ export async function selectCourse(profileId: string, offeringId: string) {
       },
     });
 
-    const reasons = getUnavailableReasons({
+    const activeCourses = activeRegistrations
+      .filter((registration) => registration.offeringId !== offeringId)
+      .map((registration) => ({
+        offeringId: registration.offeringId,
+        courseName: registration.offering.course.name,
+        meetingTimes: registration.offering.meetingTimes,
+      }));
+
+    const ruleChecks = buildCourseRuleChecks({
       offering,
       student,
       term,
-      activeSlots: activeRegistrations.flatMap(
-        (registration) => registration.offering.meetingTimes,
-      ),
+      activeCourses,
       ownRegistrationStatus: existing?.status,
     });
+    const reasons = getUnavailableReasons(ruleChecks, existing?.status);
 
     if (reasons.length > 0) {
       throw new Error(reasons[0]);
@@ -315,11 +343,11 @@ export async function dropCourse(profileId: string, registrationId: string) {
   await safeInvalidateEnrollmentCaches(profileId);
 }
 
-function getUnavailableReasons({
+export function buildCourseRuleChecks({
   offering,
   student,
   term,
-  activeSlots,
+  activeCourses,
   ownRegistrationStatus,
 }: {
   offering: Prisma.CourseOfferingGetPayload<{
@@ -331,59 +359,120 @@ function getUnavailableReasons({
   }>;
   student: { departmentId: string; majorId: string; grade: number };
   term: { selectionStartsAt: Date; selectionEndsAt: Date };
-  activeSlots: {
-    offeringId?: string;
-    weekday: number;
-    startPeriod: number;
-    endPeriod: number;
-    startWeek: number;
-    endWeek: number;
+  activeCourses: {
+    offeringId: string;
+    courseName: string;
+    meetingTimes: {
+      weekday: number;
+      startPeriod: number;
+      endPeriod: number;
+      startWeek: number;
+      endWeek: number;
+    }[];
   }[];
   ownRegistrationStatus?: RegistrationStatus;
-}) {
-  const reasons: string[] = [];
-
-  if (offering.course.category === CourseCategory.REQUIRED) {
-    reasons.push("必修课由教务系统预置");
-  }
-
-  if (ownRegistrationStatus === RegistrationStatus.ACTIVE) {
-    reasons.push("已选择该课程");
-  }
-
-  if (!isTermOpen(term)) {
-    reasons.push("不在选课开放期");
-  }
-
-  if (offering.status === OfferingStatus.CLOSED) {
-    reasons.push("课程名单已冻结");
-  }
-
-  if (offering.status === OfferingStatus.CANCELED) {
-    reasons.push("课程已取消");
-  }
-
-  if (offering.enrolledCount >= offering.capacity) {
-    reasons.push("课程容量已满");
-  }
-
-  if (
-    offering.course.category === CourseCategory.MAJOR_ELECTIVE &&
-    !offering.eligibilityRules.some(
+}): CourseRuleCheck[] {
+  const termOpen = isTermOpen(term);
+  const eligible =
+    offering.course.category !== CourseCategory.MAJOR_ELECTIVE ||
+    offering.eligibilityRules.some(
       (rule) =>
         rule.majorId === student.majorId &&
         rule.grade === student.grade &&
         rule.departmentId === student.departmentId,
-    )
-  ) {
-    reasons.push("不符合专业年级范围");
-  }
+    );
+  const conflictCourse = activeCourses.find((course) =>
+    hasMeetingConflict(course.meetingTimes, offering.meetingTimes),
+  );
+  const full = offering.enrolledCount >= offering.capacity;
 
-  if (hasMeetingConflict(activeSlots, offering.meetingTimes)) {
-    reasons.push("上课时间冲突");
+  return [
+    {
+      code: "TERM_WINDOW",
+      label: "开放期",
+      status: termOpen ? "pass" : "block",
+      detail: termOpen ? "当前开放" : "未开放",
+    },
+    {
+      code: "OFFERING_STATUS",
+      label: "课程状态",
+      status: offering.status === OfferingStatus.PUBLISHED ? "pass" : "block",
+      detail: offeringStatusDetail(offering.status),
+    },
+    {
+      code: "COURSE_CATEGORY",
+      label: "课程类别",
+      status:
+        offering.course.category === CourseCategory.REQUIRED
+          ? "block"
+          : ownRegistrationStatus === RegistrationStatus.ACTIVE
+          ? "info"
+          : "pass",
+      detail:
+        offering.course.category === CourseCategory.REQUIRED
+          ? "必修锁定"
+          : ownRegistrationStatus === RegistrationStatus.ACTIVE
+          ? "已入课表"
+          : "学生可选",
+    },
+    {
+      code: "ELIGIBILITY",
+      label: "专业年级",
+      status: eligible ? "pass" : "block",
+      detail:
+        offering.course.category === CourseCategory.MAJOR_ELECTIVE
+          ? eligible
+            ? "范围匹配"
+            : "范围不匹配"
+          : "不限专业",
+    },
+    {
+      code: "CAPACITY",
+      label: "容量",
+      status: full ? "block" : "pass",
+      detail: `${offering.enrolledCount}/${offering.capacity}`,
+    },
+    {
+      code: "TIME_CONFLICT",
+      label: "时间冲突",
+      status: conflictCourse ? "block" : "pass",
+      detail: conflictCourse ? conflictCourse.courseName : "无冲突",
+    },
+  ];
+}
+
+function getUnavailableReasons(
+  ruleChecks: CourseRuleCheck[],
+  ownRegistrationStatus?: RegistrationStatus,
+) {
+  const reasons = ruleChecks
+    .filter((check) => check.status === "block")
+    .map(ruleCheckToReason);
+
+  if (ownRegistrationStatus === RegistrationStatus.ACTIVE && !reasons.includes("已选择该课程")) {
+    reasons.push("已选择该课程");
   }
 
   return reasons;
+}
+
+function ruleCheckToReason(check: CourseRuleCheck) {
+  if (check.code === "TERM_WINDOW") return "不在选课开放期";
+  if (check.code === "COURSE_CATEGORY") return "必修课由教务系统预置";
+  if (check.code === "ELIGIBILITY") return "不符合专业年级范围";
+  if (check.code === "CAPACITY") return "课程容量已满";
+  if (check.code === "TIME_CONFLICT") return "上课时间冲突";
+  if (check.code === "OFFERING_STATUS") {
+    return check.detail === "已取消" ? "课程已取消" : "课程名单已冻结";
+  }
+
+  return "不可选";
+}
+
+function offeringStatusDetail(status: OfferingStatus) {
+  if (status === OfferingStatus.PUBLISHED) return "开放";
+  if (status === OfferingStatus.CLOSED) return "已冻结";
+  return "已取消";
 }
 
 function isTermOpen(term: { selectionStartsAt: Date; selectionEndsAt: Date }) {

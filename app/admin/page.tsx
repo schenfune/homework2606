@@ -109,6 +109,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                     <TableHead>状态</TableHead>
                     <TableHead>容量</TableHead>
                     <TableHead>有效</TableHead>
+                    <TableHead>候补</TableHead>
                     <TableHead>退课</TableHead>
                     <TableHead>移除</TableHead>
                     <TableHead>操作</TableHead>
@@ -129,6 +130,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                       </TableCell>
                       <TableCell>{stat.capacity}</TableCell>
                       <TableCell>{stat.active}</TableCell>
+                      <TableCell>{stat.waitlisted}</TableCell>
                       <TableCell>{stat.dropped}</TableCell>
                       <TableCell>{stat.removed}</TableCell>
                       <TableCell>
@@ -234,9 +236,10 @@ function AdminOfferingSheet({
             </SheetTitle>
           </SheetHeader>
           <SheetBody>
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-5">
               <MetricBox label="容量" value={`${offering.enrolledCount}/${offering.capacity}`} />
               <MetricBox label="有效" value={`${offering.active}`} />
+              <MetricBox label="候补" value={`${offering.waitlisted}`} />
               <MetricBox label="退课" value={`${offering.dropped}`} />
               <MetricBox label="移除" value={`${offering.removed}`} />
             </div>
@@ -284,6 +287,7 @@ function RegistrationTable({
               <TableHead>专业</TableHead>
               <TableHead>年级</TableHead>
               <TableHead>状态</TableHead>
+              <TableHead>顺位</TableHead>
               <TableHead>登记时间</TableHead>
             </TableRow>
           </TableHeader>
@@ -295,10 +299,11 @@ function RegistrationTable({
                 <TableCell>{registration.student.major.name}</TableCell>
                 <TableCell>{registration.student.grade}</TableCell>
                 <TableCell>
-                  <Badge variant={registration.status === "ACTIVE" ? "success" : "secondary"}>
+                  <Badge variant={registrationStatusVariant(registration.status)}>
                     {registrationStatusLabel(registration.status)}
                   </Badge>
                 </TableCell>
+                <TableCell>{registration.waitlistPosition ?? "-"}</TableCell>
                 <TableCell>{dateTimeLabel(registration.registeredAt)}</TableCell>
               </TableRow>
             ))}
@@ -309,6 +314,16 @@ function RegistrationTable({
       )}
     </div>
   );
+}
+
+function registrationStatusVariant(
+  status: Awaited<
+    ReturnType<typeof getAdminDashboard>
+  >["offeringDetails"][number]["registrations"][number]["status"],
+): "secondary" | "success" | "warning" {
+  if (status === "ACTIVE") return "success";
+  if (status === "WAITLISTED") return "warning";
+  return "secondary";
 }
 
 function OfferingLogTable({

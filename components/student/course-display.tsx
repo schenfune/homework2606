@@ -24,6 +24,8 @@ export type CourseListItem = {
   ruleChecks: CourseRuleCheck[];
   unavailableReasons: string[];
   selected: boolean;
+  waitlisted: boolean;
+  waitlistPosition?: number | null;
 };
 
 export function CourseStatusBadges({ course }: { course: CourseListItem }) {
@@ -46,7 +48,13 @@ export function CourseStatusBadges({ course }: { course: CourseListItem }) {
 
 export function CourseAction({ course }: { course: CourseListItem }) {
   const disabled = course.unavailableReasons.length > 0;
-  const label = course.selected ? "已入课表" : "选课";
+  const label = course.selected
+    ? "已入课表"
+    : course.waitlisted
+    ? "候补中"
+    : isFull(course) && !disabled
+    ? "候补"
+    : "选课";
 
   return (
     <Tooltip content={disabled ? getTooltipContent(course) : undefined}>
@@ -117,12 +125,17 @@ function getBlockLabels(course: CourseListItem) {
     labels.unshift("已入课表");
   }
 
+  if (course.waitlisted && !labels.includes("候补中")) {
+    labels.unshift(course.waitlistPosition ? `候补第${course.waitlistPosition}位` : "候补中");
+  }
+
   return Array.from(new Set(labels));
 }
 
 function reasonToLabel(reason: string) {
   if (reason.includes("必修")) return "必修";
   if (reason.includes("已选择")) return "已入课表";
+  if (reason.includes("候补")) return "候补中";
   if (reason.includes("开放期")) return "未开放";
   if (reason.includes("冻结")) return "冻结";
   if (reason.includes("取消")) return "停开";
@@ -130,4 +143,8 @@ function reasonToLabel(reason: string) {
   if (reason.includes("专业")) return "限选";
   if (reason.includes("冲突")) return "冲突";
   return "不可选";
+}
+
+function isFull(course: CourseListItem) {
+  return course.enrolledCount >= course.capacity;
 }

@@ -1,4 +1,4 @@
-import { CourseCategory, OfferingStatus } from "@prisma/client";
+import { CourseCategory, OfferingStatus, RegistrationStatus } from "@prisma/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +32,12 @@ import {
   type CourseListItem,
 } from "@/components/student/course-display";
 import { requireRole } from "@/lib/auth/server";
-import { categoryLabel, dateTimeLabel, offeringStatusLabel } from "@/lib/format";
+import {
+  categoryLabel,
+  dateTimeLabel,
+  offeringStatusLabel,
+  registrationStatusLabel,
+} from "@/lib/format";
 import { getStudentDashboard } from "@/lib/services/enrollment";
 import { dropCourseAction } from "@/app/student/actions";
 
@@ -320,6 +325,8 @@ function ScheduleTable({
             course.category !== CourseCategory.REQUIRED &&
             registration.offering.status === OfferingStatus.PUBLISHED;
           const lockLabel = course.category === CourseCategory.REQUIRED ? "必修" : "冻结";
+          const actionLabel =
+            registration.status === RegistrationStatus.WAITLISTED ? "退出候补" : "退课";
 
           return (
             <TableRow key={registration.id}>
@@ -330,7 +337,15 @@ function ScheduleTable({
                 </div>
               </TableCell>
               <TableCell>
-                <Badge>{categoryLabel(course.category)}</Badge>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge>{categoryLabel(course.category)}</Badge>
+                  {registration.status === RegistrationStatus.WAITLISTED ? (
+                    <Badge variant="warning">
+                      {registrationStatusLabel(registration.status)}
+                      {registration.waitlistPosition ? `第${registration.waitlistPosition}位` : ""}
+                    </Badge>
+                  ) : null}
+                </div>
               </TableCell>
               <TableCell>
                 <MeetingTimeList meetingTimes={registration.offering.meetingTimes} />
@@ -341,7 +356,7 @@ function ScheduleTable({
                     <form action={dropCourseAction}>
                       <input name="registrationId" type="hidden" value={registration.id} />
                       <Button size="sm" variant="outline">
-                        退课
+                        {actionLabel}
                       </Button>
                     </form>
                   ) : (
@@ -402,7 +417,7 @@ function CourseSheet({
               <CourseStatusBadges course={course} />
               <Tooltip content={course.unavailableReasons.length ? getTooltipContent(course) : undefined}>
                 <span className="text-sm text-zinc-500">
-                  {course.unavailableReasons.length ? "受限" : "可选"}
+                  {availabilityLabel(course)}
                 </span>
               </Tooltip>
             </div>
@@ -411,6 +426,12 @@ function CourseSheet({
       ) : null}
     </Sheet>
   );
+}
+
+function availabilityLabel(course: CourseListItem) {
+  if (course.unavailableReasons.length) return "受限";
+  if (course.enrolledCount >= course.capacity) return "可候补";
+  return "可选";
 }
 
 function RuleCheckTable({ checks }: { checks: CourseListItem["ruleChecks"] }) {
@@ -447,7 +468,7 @@ function ruleCheckVariant(status: CourseListItem["ruleChecks"][number]["status"]
 function ruleCheckStatusLabel(status: CourseListItem["ruleChecks"][number]["status"]) {
   if (status === "pass") return "通过";
   if (status === "block") return "受限";
-  return "已选";
+  return "提示";
 }
 
 function DetailGrid({ items }: { items: [string, string][] }) {

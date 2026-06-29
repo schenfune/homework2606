@@ -112,7 +112,10 @@ export default async function StudentPage({ searchParams }: StudentPageProps) {
                 </CardHeader>
                 <CardContent>
                   {dashboard.registrations.length > 0 ? (
-                    <ScheduleTable registrations={dashboard.registrations} />
+                    <div className="space-y-6">
+                      <ScheduleGrid registrations={dashboard.registrations} />
+                      <ScheduleTable registrations={dashboard.registrations} />
+                    </div>
                   ) : (
                     <Empty>暂无课表</Empty>
                   )}
@@ -176,10 +179,129 @@ function CourseTable({ courses, tab }: { courses: CourseListItem[]; tab: string 
   );
 }
 
+type ScheduleRegistration = Awaited<
+  ReturnType<typeof getStudentDashboard>
+>["registrations"][number];
+
+function ScheduleGrid({ registrations }: { registrations: ScheduleRegistration[] }) {
+  const visibleRegistrations = registrations.filter((registration) =>
+    isScheduleOccupyingStatus(registration.status),
+  );
+  const maxPeriod = Math.max(
+    8,
+    ...visibleRegistrations.flatMap((registration) =>
+      registration.offering.meetingTimes.map((slot) => slot.endPeriod),
+    ),
+  );
+  const periods = Array.from({ length: maxPeriod }, (_, index) => index + 1);
+
+  return (
+    <div>
+      <div className="mb-3 text-sm font-medium text-zinc-950">节次</div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-16">节次</TableHead>
+            {weekdays.map((weekday) => (
+              <TableHead key={weekday.value}>{weekday.label}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {periods.map((period) => (
+            <TableRow key={period}>
+              <TableCell className="font-medium text-zinc-950">{period}</TableCell>
+              {weekdays.map((weekday) => {
+                const cells = getScheduleCells({
+                  registrations: visibleRegistrations,
+                  weekday: weekday.value,
+                  period,
+                });
+
+                return (
+                  <TableCell className="min-w-32 align-top" key={weekday.value}>
+                    {cells.length > 0 ? (
+                      <div className="space-y-2">
+                        {cells.map((cell) => (
+                          <div
+                            className="rounded-md border border-zinc-200 bg-white p-2"
+                            key={cell.key}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs font-medium text-zinc-950">
+                                {cell.courseName}
+                              </div>
+                              <Badge
+                                variant={cell.status === "WAITLISTED" ? "warning" : "success"}
+                              >
+                                {cell.status === "WAITLISTED" ? "候补" : "已选"}
+                              </Badge>
+                            </div>
+                            <div className="mt-1 text-xs text-zinc-500">
+                              {cell.classNo}班 · {cell.weeks}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-zinc-300">-</span>
+                    )}
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function getScheduleCells({
+  registrations,
+  weekday,
+  period,
+}: {
+  registrations: ScheduleRegistration[];
+  weekday: number;
+  period: number;
+}) {
+  return registrations.flatMap((registration) =>
+    registration.offering.meetingTimes
+      .filter(
+        (slot) =>
+          slot.weekday === weekday &&
+          period >= slot.startPeriod &&
+          period <= slot.endPeriod,
+      )
+      .map((slot) => ({
+        key: `${registration.id}-${slot.id}-${period}`,
+        courseName: registration.offering.course.name,
+        classNo: registration.offering.classNo,
+        weeks: `${slot.startWeek}-${slot.endWeek}周`,
+        status: String(registration.status),
+      })),
+  );
+}
+
+function isScheduleOccupyingStatus(status: unknown) {
+  return status === "ACTIVE" || status === "WAITLISTED";
+}
+
+const weekdays = [
+  { value: 1, label: "周一" },
+  { value: 2, label: "周二" },
+  { value: 3, label: "周三" },
+  { value: 4, label: "周四" },
+  { value: 5, label: "周五" },
+  { value: 6, label: "周六" },
+  { value: 7, label: "周日" },
+];
+
 function ScheduleTable({
   registrations,
 }: {
-  registrations: Awaited<ReturnType<typeof getStudentDashboard>>["registrations"];
+  registrations: ScheduleRegistration[];
 }) {
   return (
     <Table>

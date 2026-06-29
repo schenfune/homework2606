@@ -159,14 +159,9 @@ async function loadStudentDashboard(profileId: string) {
 }
 
 export async function selectCourse(profileId: string, offeringId: string) {
-  const registration = await runSerializableTransaction(async (tx) => {
-    const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
-      SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
-    `;
-
-    if (!lock?.locked) {
-      throw new Error("同一学生正在提交选课请求，请稍后再试");
-    }
+  const registration = await runEnrollmentTransaction(async (tx) => {
+    await acquireStudentSubmissionLock(tx, profileId, "选课");
+    await acquireOfferingLock(tx, offeringId);
 
     const student = await tx.studentProfile.findUnique({
       where: { id: profileId },
@@ -185,8 +180,6 @@ export async function selectCourse(profileId: string, offeringId: string) {
     if (!student || !term || !offering) {
       throw new Error("选课数据不存在");
     }
-
-    await acquireOfferingLock(tx, offeringId);
 
     const existing = await tx.courseRegistration.findUnique({
       where: {
@@ -332,14 +325,8 @@ export async function selectCourse(profileId: string, offeringId: string) {
 }
 
 export async function dropCourse(profileId: string, registrationId: string) {
-  await runSerializableTransaction(async (tx) => {
-    const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
-      SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
-    `;
-
-    if (!lock?.locked) {
-      throw new Error("同一学生正在提交退课请求，请稍后再试");
-    }
+  await runEnrollmentTransaction(async (tx) => {
+    await acquireStudentSubmissionLock(tx, profileId, "退课");
 
     const registration = await tx.courseRegistration.findFirst({
       where: {
@@ -702,17 +689,27 @@ function assertTermOpen(term: { selectionStartsAt: Date; selectionEndsAt: Date }
   }
 }
 
-async function acquireOfferingLock(tx: Prisma.TransactionClient, offeringId: string) {
+async function acquireStudentSubmissionLock(
+  tx: Prisma.TransactionClient,
+  profileId: string,
+  action: "选课" | "退课",
+) {
   const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
-    SELECT pg_try_advisory_xact_lock(hashtext(${`offering:${offeringId}`})) AS locked
+    SELECT pg_try_advisory_xact_lock(hashtext(${profileId})) AS locked
   `;
 
   if (!lock?.locked) {
-    throw new Error("课程名单正在更新，请稍后再试");
+    throw new Error(`同一学生正在提交${action}请求，请稍后再试`);
   }
 }
 
-async function runSerializableTransaction<T>(
+async function acquireOfferingLock(tx: Prisma.TransactionClient, offeringId: string) {
+  await tx.$queryRaw<{ locked: string | null }[]>`
+    SELECT pg_advisory_xact_lock(hashtext(${`offering:${offeringId}`}))::text AS locked
+  `;
+}
+
+async function runEnrollmentTransaction<T>(
   callback: (tx: Prisma.TransactionClient) => Promise<T>,
   attempts = 5,
 ) {
@@ -721,7 +718,9 @@ async function runSerializableTransaction<T>(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       return await prisma.$transaction(callback, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+        maxWait: 30_000,
+        timeout: 30_000,
       });
     } catch (error) {
       lastError = error;
@@ -748,11 +747,7 @@ function isRetryableTransactionError(error: unknown) {
   }
 
   const message = error instanceof Error ? error.message : "";
-  return (
-    message.includes("write conflict") ||
-    message.includes("deadlock") ||
-    message.includes("课程名单正在更新")
-  );
+  return message.includes("write conflict") || message.includes("deadlock");
 }
 
 function wait(milliseconds: number) {

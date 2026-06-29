@@ -46,7 +46,13 @@ type LoadVerificationReport = {
     activeResponses: number;
     waitlistedResponses: number;
     successResponses: number;
+    unknownSuccessResponses: number;
     businessRejects: number;
+    busyRejects: number;
+    duplicateRejects: number;
+    conflictRejects: number;
+    ruleRejects: number;
+    otherBusinessRejects: number;
     rateLimitedResponses: number;
     authRejects: number;
     serverErrors: number;
@@ -126,7 +132,13 @@ async function main() {
       activeResponses: k6Metric(k6Summary, "active_responses", "count"),
       waitlistedResponses: k6Metric(k6Summary, "waitlisted_responses", "count"),
       successResponses: k6Metric(k6Summary, "success_responses", "count"),
+      unknownSuccessResponses: k6Metric(k6Summary, "unknown_success_responses", "count"),
       businessRejects: k6Metric(k6Summary, "business_rejects", "count"),
+      busyRejects: k6Metric(k6Summary, "busy_rejects", "count"),
+      duplicateRejects: k6Metric(k6Summary, "duplicate_rejects", "count"),
+      conflictRejects: k6Metric(k6Summary, "conflict_rejects", "count"),
+      ruleRejects: k6Metric(k6Summary, "rule_rejects", "count"),
+      otherBusinessRejects: k6Metric(k6Summary, "other_business_rejects", "count"),
       rateLimitedResponses: k6Metric(k6Summary, "rate_limited_responses", "count"),
       authRejects: k6Metric(k6Summary, "auth_rejects", "count"),
       serverErrors: k6Metric(k6Summary, "server_errors", "count"),
@@ -190,7 +202,13 @@ function renderMarkdown(report: LoadVerificationReport) {
 | 200响应 | ${formatNumber(report.k6.successResponses)} |
 | 正式入选响应 | ${formatNumber(report.k6.activeResponses)} |
 | 候补入队响应 | ${formatNumber(report.k6.waitlistedResponses)} |
+| 未知成功响应 | ${formatNumber(report.k6.unknownSuccessResponses)} |
 | 业务拒绝 | ${formatNumber(report.k6.businessRejects)} |
+| 忙碌拒绝 | ${formatNumber(report.k6.busyRejects)} |
+| 重复提交拒绝 | ${formatNumber(report.k6.duplicateRejects)} |
+| 时间冲突拒绝 | ${formatNumber(report.k6.conflictRejects)} |
+| 规则拒绝 | ${formatNumber(report.k6.ruleRejects)} |
+| 其他业务拒绝 | ${formatNumber(report.k6.otherBusinessRejects)} |
 | 限流响应 | ${formatNumber(report.k6.rateLimitedResponses)} |
 | 鉴权拒绝 | ${formatNumber(report.k6.authRejects)} |
 | 服务错误 | ${formatNumber(report.k6.serverErrors)} |

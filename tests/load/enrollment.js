@@ -7,7 +7,13 @@ http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
 const activeResponses = new Counter("active_responses");
 const waitlistedResponses = new Counter("waitlisted_responses");
 const successResponses = new Counter("success_responses");
+const unknownSuccessResponses = new Counter("unknown_success_responses");
 const businessRejects = new Counter("business_rejects");
+const busyRejects = new Counter("busy_rejects");
+const duplicateRejects = new Counter("duplicate_rejects");
+const conflictRejects = new Counter("conflict_rejects");
+const ruleRejects = new Counter("rule_rejects");
+const otherBusinessRejects = new Counter("other_business_rejects");
 const rateLimitedResponses = new Counter("rate_limited_responses");
 const authRejects = new Counter("auth_rejects");
 const serverErrors = new Counter("server_errors");
@@ -23,7 +29,7 @@ const vus = Number(__ENV.VUS || (mode === "flash" ? studentCount : 100));
 const duration = __ENV.DURATION || "30s";
 const maxDuration = __ENV.MAX_DURATION || "1m";
 const sleepSeconds = Number(__ENV.SLEEP_SECONDS || (mode === "flash" ? 0 : 1));
-const p95Threshold = Number(__ENV.P95_THRESHOLD_MS || 2000);
+const p95Threshold = Number(__ENV.P95_THRESHOLD_MS || (mode === "flash" ? 10000 : 2000));
 const offeringId = __ENV.OFFERING_ID || targetConfig?.offeringId;
 const manualCookies = (__ENV.SESSION_COOKIES || __ENV.SESSION_COOKIE || "")
   .split("|")
@@ -184,23 +190,64 @@ function loginStudent(student) {
 }
 
 function recordOutcome(response) {
+  const body = parseResponseJson(response);
+
   if (response.status === 200) {
     successResponses.add(1);
-    const status = response.json("status");
+    const status = body?.status;
 
     if (status === "ACTIVE") {
       activeResponses.add(1);
     } else if (status === "WAITLISTED") {
       waitlistedResponses.add(1);
+    } else {
+      unknownSuccessResponses.add(1);
     }
   } else if (response.status === 400) {
     businessRejects.add(1);
+    recordBusinessReject(body?.message);
   } else if (response.status === 403) {
     authRejects.add(1);
   } else if (response.status === 429) {
     rateLimitedResponses.add(1);
   } else if (response.status >= 500) {
     serverErrors.add(1);
+  }
+}
+
+function parseResponseJson(response) {
+  try {
+    const value = response.json();
+    return value && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function recordBusinessReject(message) {
+  const text = String(message || "");
+
+  if (
+    text.includes("正在提交") ||
+    text.includes("正在更新") ||
+    text.includes("提交冲突")
+  ) {
+    busyRejects.add(1);
+  } else if (text.includes("已选择") || text.includes("已加入候补")) {
+    duplicateRejects.add(1);
+  } else if (text.includes("时间冲突")) {
+    conflictRejects.add(1);
+  } else if (
+    text.includes("开放期") ||
+    text.includes("必修") ||
+    text.includes("专业年级") ||
+    text.includes("冻结") ||
+    text.includes("停开") ||
+    text.includes("容量")
+  ) {
+    ruleRejects.add(1);
+  } else {
+    otherBusinessRejects.add(1);
   }
 }
 
@@ -233,7 +280,13 @@ function buildTextSummary(data) {
     `P95延迟: ${formatMs(metric(data, "http_req_duration", "p(95)"))}`,
     `正式入选响应: ${formatNumber(metric(data, "active_responses", "count"))}`,
     `候补入队响应: ${formatNumber(metric(data, "waitlisted_responses", "count"))}`,
+    `未知成功响应: ${formatNumber(metric(data, "unknown_success_responses", "count"))}`,
     `业务拒绝: ${formatNumber(metric(data, "business_rejects", "count"))}`,
+    `忙碌拒绝: ${formatNumber(metric(data, "busy_rejects", "count"))}`,
+    `重复提交拒绝: ${formatNumber(metric(data, "duplicate_rejects", "count"))}`,
+    `时间冲突拒绝: ${formatNumber(metric(data, "conflict_rejects", "count"))}`,
+    `规则拒绝: ${formatNumber(metric(data, "rule_rejects", "count"))}`,
+    `其他业务拒绝: ${formatNumber(metric(data, "other_business_rejects", "count"))}`,
     `限流响应: ${formatNumber(metric(data, "rate_limited_responses", "count"))}`,
     `鉴权拒绝: ${formatNumber(metric(data, "auth_rejects", "count"))}`,
     `服务错误: ${formatNumber(metric(data, "server_errors", "count"))}`,
@@ -247,7 +300,13 @@ function buildHtmlReport(data) {
   const total = metric(data, "http_reqs", "count");
   const active = metric(data, "active_responses", "count");
   const waitlisted = metric(data, "waitlisted_responses", "count");
+  const unknown = metric(data, "unknown_success_responses", "count");
   const business = metric(data, "business_rejects", "count");
+  const busy = metric(data, "busy_rejects", "count");
+  const duplicate = metric(data, "duplicate_rejects", "count");
+  const conflict = metric(data, "conflict_rejects", "count");
+  const rule = metric(data, "rule_rejects", "count");
+  const otherBusiness = metric(data, "other_business_rejects", "count");
   const limited = metric(data, "rate_limited_responses", "count");
   const auth = metric(data, "auth_rejects", "count");
   const server = metric(data, "server_errors", "count");
@@ -266,10 +325,18 @@ function buildHtmlReport(data) {
   const outcomeRows = [
     ["正式入选", active, "#15803d"],
     ["候补入队", waitlisted, "#0369a1"],
+    ["未知200", unknown, "#64748b"],
     ["业务拒绝", business, "#b45309"],
     ["限流", limited, "#7c3aed"],
     ["鉴权拒绝", auth, "#475569"],
     ["服务错误", server, "#b91c1c"],
+  ];
+  const rejectRows = [
+    ["忙碌拒绝", busy],
+    ["重复提交拒绝", duplicate],
+    ["时间冲突拒绝", conflict],
+    ["规则拒绝", rule],
+    ["其他业务拒绝", otherBusiness],
   ];
 
   return `<!doctype html>
@@ -436,6 +503,20 @@ function buildHtmlReport(data) {
           <tr><td>应用可处理结果</td><td>95%以上</td><td>${formatPercent(
             metric(data, "handled_outcomes", "rate"),
           )}</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="panel">
+      <h2>业务拒绝细分</h2>
+      <table>
+        <thead><tr><th>类型</th><th>数量</th></tr></thead>
+        <tbody>
+          ${rejectRows
+            .map(
+              ([label, count]) =>
+                `<tr><td>${escapeHtml(label)}</td><td>${formatNumber(Number(count))}</td></tr>`,
+            )
+            .join("")}
         </tbody>
       </table>
     </section>

@@ -8,6 +8,7 @@ import {
 import { pathToFileURL } from "node:url";
 import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db/prisma";
+import { redis } from "../lib/db/redis";
 import { safeInvalidateAllEnrollmentCaches } from "../lib/services/cache";
 
 const demoPassword = "12345678";
@@ -539,11 +540,19 @@ async function createSoftwareEligibilityRules({
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   seedDemoData()
     .then(async () => {
-      await prisma.$disconnect();
+      await disconnectSeedClients();
     })
     .catch(async (error) => {
       console.error(error);
-      await prisma.$disconnect();
+      await disconnectSeedClients();
       process.exit(1);
     });
+}
+
+async function disconnectSeedClients() {
+  await prisma.$disconnect();
+
+  if (redis.isOpen) {
+    await redis.quit();
+  }
 }

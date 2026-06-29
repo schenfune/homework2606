@@ -168,10 +168,70 @@ export async function seedDemoData() {
       },
     });
 
+    const cloudNativeCourse = await tx.course.create({
+      data: {
+        courseNo: "SE303",
+        name: "云原生架构",
+        credits: 2,
+        category: CourseCategory.MAJOR_ELECTIVE,
+        departmentId: software.id,
+      },
+    });
+
+    const testingCourse = await tx.course.create({
+      data: {
+        courseNo: "SE304",
+        name: "软件测试实践",
+        credits: 2,
+        category: CourseCategory.MAJOR_ELECTIVE,
+        departmentId: software.id,
+      },
+    });
+
+    const distributedCourse = await tx.course.create({
+      data: {
+        courseNo: "SE305",
+        name: "分布式系统专题",
+        credits: 3,
+        category: CourseCategory.MAJOR_ELECTIVE,
+        departmentId: software.id,
+      },
+    });
+
     const artCourse = await tx.course.create({
       data: {
         courseNo: "GE201",
         name: "艺术鉴赏",
+        credits: 2,
+        category: CourseCategory.PUBLIC_ELECTIVE,
+        departmentId: humanities.id,
+      },
+    });
+
+    const psychologyCourse = await tx.course.create({
+      data: {
+        courseNo: "GE202",
+        name: "心理健康与成长",
+        credits: 2,
+        category: CourseCategory.PUBLIC_ELECTIVE,
+        departmentId: humanities.id,
+      },
+    });
+
+    const writingCourse = await tx.course.create({
+      data: {
+        courseNo: "GE203",
+        name: "科学写作",
+        credits: 2,
+        category: CourseCategory.PUBLIC_ELECTIVE,
+        departmentId: humanities.id,
+      },
+    });
+
+    const visualizationCourse = await tx.course.create({
+      data: {
+        courseNo: "GE204",
+        name: "数据可视化入门",
         credits: 2,
         category: CourseCategory.PUBLIC_ELECTIVE,
         departmentId: humanities.id,
@@ -248,6 +308,66 @@ export async function seedDemoData() {
       },
     });
 
+    const cloudNativeOffering = await createOffering({
+      tx,
+      termId: term.id,
+      courseId: cloudNativeCourse.id,
+      classNo: "01",
+      teacherName: "韩老师",
+      capacity: 1,
+      weekday: 2,
+      startPeriod: 3,
+      endPeriod: 4,
+    });
+
+    await createSoftwareEligibilityRules({
+      tx,
+      offeringId: cloudNativeOffering.id,
+      software,
+      softwareEngineering,
+      digitalMedia,
+    });
+
+    const testingOffering = await createOffering({
+      tx,
+      termId: term.id,
+      courseId: testingCourse.id,
+      classNo: "01",
+      teacherName: "吴老师",
+      capacity: 1,
+      weekday: 3,
+      startPeriod: 5,
+      endPeriod: 6,
+    });
+
+    await createSoftwareEligibilityRules({
+      tx,
+      offeringId: testingOffering.id,
+      software,
+      softwareEngineering,
+      digitalMedia,
+    });
+
+    const distributedOffering = await createOffering({
+      tx,
+      termId: term.id,
+      courseId: distributedCourse.id,
+      classNo: "01",
+      teacherName: "郑老师",
+      capacity: 1,
+      weekday: 1,
+      startPeriod: 1,
+      endPeriod: 2,
+    });
+
+    await createSoftwareEligibilityRules({
+      tx,
+      offeringId: distributedOffering.id,
+      software,
+      softwareEngineering,
+      digitalMedia,
+    });
+
     await createOffering({
       tx,
       termId: term.id,
@@ -258,6 +378,42 @@ export async function seedDemoData() {
       weekday: 4,
       startPeriod: 7,
       endPeriod: 8,
+    });
+
+    await createOffering({
+      tx,
+      termId: term.id,
+      courseId: psychologyCourse.id,
+      classNo: "01",
+      teacherName: "孙老师",
+      capacity: 1,
+      weekday: 4,
+      startPeriod: 7,
+      endPeriod: 8,
+    });
+
+    await createOffering({
+      tx,
+      termId: term.id,
+      courseId: writingCourse.id,
+      classNo: "01",
+      teacherName: "林老师",
+      capacity: 30,
+      weekday: 2,
+      startPeriod: 3,
+      endPeriod: 4,
+    });
+
+    await createOffering({
+      tx,
+      termId: term.id,
+      courseId: visualizationCourse.id,
+      classNo: "01",
+      teacherName: "魏老师",
+      capacity: 1,
+      weekday: 5,
+      startPeriod: 9,
+      endPeriod: 10,
     });
 
     await tx.courseOffering.update({
@@ -346,6 +502,37 @@ async function createOffering({
         },
       },
     },
+  });
+}
+
+async function createSoftwareEligibilityRules({
+  tx,
+  offeringId,
+  software,
+  softwareEngineering,
+  digitalMedia,
+}: {
+  tx: Prisma.TransactionClient;
+  offeringId: string;
+  software: { id: string };
+  softwareEngineering: { id: string };
+  digitalMedia: { id: string };
+}) {
+  await tx.eligibilityRule.createMany({
+    data: [
+      {
+        offeringId,
+        departmentId: software.id,
+        majorId: softwareEngineering.id,
+        grade: 2024,
+      },
+      {
+        offeringId,
+        departmentId: software.id,
+        majorId: digitalMedia.id,
+        grade: 2024,
+      },
+    ],
   });
 }
 

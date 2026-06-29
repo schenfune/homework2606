@@ -654,7 +654,7 @@ function getUnavailableReasons(
   ruleChecks: CourseRuleCheck[],
   ownRegistrationStatus?: RegistrationStatus,
 ) {
-  const reasons = ruleChecks
+  const reasons: string[] = ruleChecks
     .filter((check) => check.status === "block")
     .map(ruleCheckToReason);
 

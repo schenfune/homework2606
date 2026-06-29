@@ -119,7 +119,7 @@ export function getTooltipContent(course: CourseListItem) {
 }
 
 function getBlockLabels(course: CourseListItem) {
-  const labels = course.unavailableReasons.map(reasonToLabel);
+  const labels: string[] = course.unavailableReasons.map(reasonToLabel);
 
   if (course.selected && !labels.includes("已入课表")) {
     labels.unshift("已入课表");

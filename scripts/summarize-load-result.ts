@@ -4,12 +4,18 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { prisma } from "../lib/db/prisma";
 
 const artifactDir = "artifacts";
+const targetPath = `${artifactDir}/load-test-target.json`;
 const k6SummaryPath = `${artifactDir}/k6-enrollment-summary.json`;
 const verificationJsonPath = `${artifactDir}/load-test-verification.json`;
 const verificationMarkdownPath = `${artifactDir}/load-test-verification.md`;
 
 type K6Summary = {
   metrics?: Record<string, { values?: Record<string, number> }>;
+};
+
+type LoadTarget = {
+  offeringId?: string;
+  courseNo?: string;
 };
 
 type LoadVerificationReport = {
@@ -37,6 +43,8 @@ type LoadVerificationReport = {
   k6: {
     totalRequests: number;
     p95DurationMs: number;
+    activeResponses: number;
+    waitlistedResponses: number;
     successResponses: number;
     businessRejects: number;
     rateLimitedResponses: number;
@@ -49,8 +57,9 @@ type LoadVerificationReport = {
 async function main() {
   await mkdir(artifactDir, { recursive: true });
 
-  const offeringId = process.env.LOAD_OFFERING_ID;
-  const courseNo = process.env.LOAD_COURSE_NO || "SE304";
+  const target = await readLoadTarget();
+  const offeringId = process.env.LOAD_OFFERING_ID || target?.offeringId;
+  const courseNo = process.env.LOAD_COURSE_NO || target?.courseNo || "LT101";
   const offering = await prisma.courseOffering.findFirstOrThrow({
     where: offeringId
       ? {
@@ -114,6 +123,8 @@ async function main() {
     k6: {
       totalRequests: k6Metric(k6Summary, "http_reqs", "count"),
       p95DurationMs: k6Metric(k6Summary, "http_req_duration", "p(95)"),
+      activeResponses: k6Metric(k6Summary, "active_responses", "count"),
+      waitlistedResponses: k6Metric(k6Summary, "waitlisted_responses", "count"),
       successResponses: k6Metric(k6Summary, "success_responses", "count"),
       businessRejects: k6Metric(k6Summary, "business_rejects", "count"),
       rateLimitedResponses: k6Metric(k6Summary, "rate_limited_responses", "count"),
@@ -143,6 +154,14 @@ async function readK6Summary(): Promise<K6Summary | null> {
   return JSON.parse(await readFile(k6SummaryPath, "utf8")) as K6Summary;
 }
 
+async function readLoadTarget(): Promise<LoadTarget | null> {
+  if (!existsSync(targetPath)) {
+    return null;
+  }
+
+  return JSON.parse(await readFile(targetPath, "utf8")) as LoadTarget;
+}
+
 function k6Metric(summary: K6Summary | null, name: string, key: string) {
   const value = summary?.metrics?.[name]?.values?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -168,7 +187,9 @@ function renderMarkdown(report: LoadVerificationReport) {
 | --- | --- |
 | 总请求数 | ${formatNumber(report.k6.totalRequests)} |
 | P95延迟 | ${report.k6.p95DurationMs.toFixed(1)}ms |
-| 成功响应 | ${formatNumber(report.k6.successResponses)} |
+| 200响应 | ${formatNumber(report.k6.successResponses)} |
+| 正式入选响应 | ${formatNumber(report.k6.activeResponses)} |
+| 候补入队响应 | ${formatNumber(report.k6.waitlistedResponses)} |
 | 业务拒绝 | ${formatNumber(report.k6.businessRejects)} |
 | 限流响应 | ${formatNumber(report.k6.rateLimitedResponses)} |
 | 鉴权拒绝 | ${formatNumber(report.k6.authRejects)} |

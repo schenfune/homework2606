@@ -37,8 +37,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await selectCourse(user.profileId, body.offeringId);
-    return NextResponse.json({ ok: true, message: "选课成功" });
+    const registration = await selectCourse(user.profileId, body.offeringId);
+    return NextResponse.json({
+      ok: true,
+      message: registration.status === "WAITLISTED" ? "候补成功" : "选课成功",
+      status: registration.status,
+      waitlistPosition: registration.waitlistPosition,
+    });
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : "选课失败" },

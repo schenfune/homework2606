@@ -100,13 +100,13 @@ pnpm build
 
 ## 7.6 压测说明
 
-`tests/load/enrollment.js`用于选课HTTP接口压测。压测前需要启动本地服务，并准备目标开课班编号和登录会话Cookie。压测目标在于证明系统入口具备限流、缓存和容量一致性保护。
+`tests/load/enrollment.js`用于选课HTTP接口压测。压测前先运行`pnpm exec tsx scripts/seed-load-test.ts`生成专用压测课程和压测学生。主压测采用多学生同时抢课模式，目标在于证明开选瞬间的事务一致性、候补入队和容量不超卖。单账号重复提交只作为限流专项，用来证明Redis会拦截异常高频请求。
 
-建议在报告中记录压测配置、并发用户数、请求失败率和数据库最终登记数量。若压测触发限流，说明Redis限流生效；若容量没有超卖，说明数据库事务和锁设计生效。
+建议在报告中记录压测配置、并发学生数、课程容量、正式入选人数、候补人数、P95延迟、服务端错误数和数据库最终登记数量。若正式入选人数等于课程容量，候补人数等于剩余提交学生数，且服务错误为0，可以说明系统在并发抢课下保持了业务一致性。
 
 ## 7.7 可视化测试报告与压测产物
 
-可视化测试报告统一输出到`artifacts/`目录。Allure报告用于展示自动化测试用例、分组、耗时和失败定位；k6报告用于展示选课接口在并发请求下的响应分布、P95延迟、限流次数和服务错误数量；压测后数据库校验摘要用于证明有效登记数没有超过课程容量。
+可视化测试报告统一输出到`artifacts/`目录。Allure报告用于展示自动化测试用例、分组、耗时和失败定位；k6主报告用于展示多学生抢课下的正式入选、候补入队、P95延迟和服务错误数量；压测后数据库校验摘要用于证明有效登记数没有超过课程容量，且`enrolledCount`与有效登记数量一致。
 
 表7.6列出可视化报告生成命令。
 
@@ -116,8 +116,10 @@ pnpm build
 | --- | --- | --- |
 | 生成Allure结果 | `pnpm exec vitest run --config vitest.allure.config.ts` | `artifacts/allure-results` |
 | 渲染Allure HTML | `allure generate artifacts/allure-results -o artifacts/allure-report --clean` | `artifacts/allure-report` |
-| 检查k6脚本 | `k6 inspect --env OFFERING_ID=dummy --env SESSION_COOKIE=dummy tests/load/enrollment.js` | 场景和阈值配置 |
-| 执行k6压测 | `k6 run --env BASE_URL=http://localhost:3000 --env OFFERING_ID=<开课班ID> --env SESSION_COOKIE="<登录Cookie>" tests/load/enrollment.js` | `artifacts/k6-enrollment-report.html`和JSON摘要 |
+| 准备压测数据 | `pnpm exec tsx scripts/seed-load-test.ts` | `artifacts/load-test-target.json` |
+| 检查k6脚本 | `k6 inspect tests/load/enrollment.js` | 场景和阈值配置 |
+| 执行多学生抢课 | `k6 run --env MODE=flash --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | `artifacts/k6-enrollment-report.html`和JSON摘要 |
+| 执行限流专项 | `k6 run --env MODE=rate-limit --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | 单账号高频提交摘要 |
 | 校验数据库结果 | `pnpm exec tsx scripts/summarize-load-result.ts` | `artifacts/load-test-verification.md`和JSON摘要 |
 
 表7.7列出报告中建议截图的位置。
@@ -128,5 +130,5 @@ pnpm build
 | --- | --- | --- |
 | 7.3测试用例与结果 | Allure概览页 | 展示16个自动化测试用例通过 |
 | 7.3测试用例与结果 | Allure用例详情页 | 展示候补、递补、管理员追踪等测试分组 |
-| 7.3测试用例与结果 | k6 HTML报告 | 展示总请求、P95延迟、业务拒绝和限流 |
+| 7.3测试用例与结果 | k6主压测HTML报告 | 展示并发学生、课程容量、正式入选、候补入队和P95延迟 |
 | 7.4问题分析与改进 | 压测后数据库校验摘要 | 展示有效登记不超过容量和计数一致 |

@@ -1,0 +1,372 @@
+import { CourseCategory, OfferingStatus, Prisma, Role } from "@prisma/client";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { hashPassword } from "../lib/auth/password";
+import { prisma } from "../lib/db/prisma";
+import { redis } from "../lib/db/redis";
+import { safeInvalidateAllEnrollmentCaches } from "../lib/services/cache";
+
+const artifactDir = "artifacts";
+const targetPath = `${artifactDir}/load-test-target.json`;
+const studentCount = Number(process.env.LOAD_STUDENT_COUNT || 200);
+const capacity = Number(process.env.LOAD_COURSE_CAPACITY || 30);
+const password = process.env.LOAD_STUDENT_PASSWORD || "12345678";
+const courseNo = process.env.LOAD_COURSE_NO || "LT101";
+const studentPrefix = process.env.LOAD_STUDENT_PREFIX || "LT2026";
+
+type LoadStudent = {
+  studentNo: string;
+  email: string;
+  password: string;
+};
+
+async function main() {
+  if (!Number.isInteger(studentCount) || studentCount <= 0) {
+    throw new Error("LOAD_STUDENT_COUNT必须是正整数");
+  }
+
+  if (!Number.isInteger(capacity) || capacity <= 0) {
+    throw new Error("LOAD_COURSE_CAPACITY必须是正整数");
+  }
+
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const department = await tx.department.upsert({
+        where: { code: "SE" },
+        update: {
+          name: "软件学院",
+        },
+        create: {
+          code: "SE",
+          name: "软件学院",
+        },
+      });
+      const major = await tx.major.upsert({
+        where: { code: "080902" },
+        update: {
+          name: "软件工程",
+          departmentId: department.id,
+        },
+        create: {
+          code: "080902",
+          name: "软件工程",
+          departmentId: department.id,
+        },
+      });
+      const term = await ensureCurrentTerm(tx);
+      const course = await tx.course.upsert({
+        where: { courseNo },
+        update: {
+          name: "高并发选课演练",
+          credits: 2,
+          category: CourseCategory.MAJOR_ELECTIVE,
+          departmentId: department.id,
+        },
+        create: {
+          courseNo,
+          name: "高并发选课演练",
+          credits: 2,
+          category: CourseCategory.MAJOR_ELECTIVE,
+          departmentId: department.id,
+        },
+      });
+      const existingOffering = await tx.courseOffering.findUnique({
+        where: {
+          termId_courseId_classNo: {
+            termId: term.id,
+            courseId: course.id,
+            classNo: "LT",
+          },
+        },
+      });
+      const existingStudents = await tx.studentProfile.findMany({
+        where: {
+          studentNo: {
+            startsWith: studentPrefix,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+      const existingStudentIds = existingStudents.map((student) => student.id);
+      const operationLogCleanup: Prisma.OperationLogWhereInput[] = [];
+      const registrationCleanup: Prisma.CourseRegistrationWhereInput[] = [];
+
+      if (existingOffering) {
+        operationLogCleanup.push({ targetId: existingOffering.id });
+        registrationCleanup.push({ offeringId: existingOffering.id });
+      }
+
+      if (existingStudentIds.length > 0) {
+        operationLogCleanup.push({
+          actorId: {
+            in: existingStudentIds,
+          },
+        });
+        registrationCleanup.push({
+          studentId: {
+            in: existingStudentIds,
+          },
+        });
+      }
+
+      if (operationLogCleanup.length > 0) {
+        await tx.operationLog.deleteMany({
+          where: {
+            OR: operationLogCleanup,
+          },
+        });
+      }
+
+      if (registrationCleanup.length > 0) {
+        await tx.courseRegistration.deleteMany({
+          where: {
+            OR: registrationCleanup,
+          },
+        });
+      }
+
+      if (existingOffering) {
+        await tx.meetingTime.deleteMany({
+          where: {
+            offeringId: existingOffering.id,
+          },
+        });
+        await tx.eligibilityRule.deleteMany({
+          where: {
+            offeringId: existingOffering.id,
+          },
+        });
+      }
+
+      const offering = await tx.courseOffering.upsert({
+        where: {
+          termId_courseId_classNo: {
+            termId: term.id,
+            courseId: course.id,
+            classNo: "LT",
+          },
+        },
+        update: {
+          capacity,
+          enrolledCount: 0,
+          teacherName: "压测教师",
+          status: OfferingStatus.PUBLISHED,
+          canceledReason: null,
+        },
+        create: {
+          termId: term.id,
+          courseId: course.id,
+          classNo: "LT",
+          capacity,
+          enrolledCount: 0,
+          teacherName: "压测教师",
+          status: OfferingStatus.PUBLISHED,
+        },
+      });
+
+      await tx.meetingTime.create({
+        data: {
+          offeringId: offering.id,
+          weekday: 6,
+          startPeriod: 11,
+          endPeriod: 12,
+          startWeek: 1,
+          endWeek: 16,
+        },
+      });
+      await tx.eligibilityRule.create({
+        data: {
+          offeringId: offering.id,
+          departmentId: department.id,
+          majorId: major.id,
+          grade: 2026,
+        },
+      });
+
+      const students: LoadStudent[] = [];
+      const passwordHash = await hashPassword(password);
+
+      for (let index = 1; index <= studentCount; index += 1) {
+        const studentNo = `${studentPrefix}${String(index).padStart(4, "0")}`;
+        const email = `${studentNo.toLowerCase()}@campus.local`;
+        const student = await tx.studentProfile.upsert({
+          where: { studentNo },
+          update: {
+            name: `压测学生${String(index).padStart(3, "0")}`,
+            grade: 2026,
+            departmentId: department.id,
+            majorId: major.id,
+          },
+          create: {
+            studentNo,
+            name: `压测学生${String(index).padStart(3, "0")}`,
+            grade: 2026,
+            departmentId: department.id,
+            majorId: major.id,
+          },
+        });
+        const user = await tx.user.upsert({
+          where: { email },
+          update: {
+            name: student.name,
+            emailVerified: true,
+            username: studentNo,
+            displayUsername: studentNo,
+            role: Role.STUDENT,
+            profileId: student.id,
+          },
+          create: {
+            name: student.name,
+            email,
+            emailVerified: true,
+            username: studentNo,
+            displayUsername: studentNo,
+            role: Role.STUDENT,
+            profileId: student.id,
+          },
+        });
+
+        await tx.session.deleteMany({
+          where: {
+            userId: user.id,
+          },
+        });
+        await tx.account.deleteMany({
+          where: {
+            userId: user.id,
+            providerId: "credential",
+          },
+        });
+        await tx.account.create({
+          data: {
+            accountId: email,
+            providerId: "credential",
+            userId: user.id,
+            password: passwordHash,
+          },
+        });
+        students.push({
+          studentNo,
+          email,
+          password,
+        });
+      }
+
+      return {
+        offering,
+        course,
+        students,
+      };
+    },
+    {
+      timeout: 60_000,
+    },
+  );
+
+  await safeInvalidateAllEnrollmentCaches();
+  await clearRateLimitKeys(result.students.map((student) => student.studentNo));
+  await mkdir(artifactDir, { recursive: true });
+  await clearOldLoadArtifacts();
+  await writeFile(
+    targetPath,
+    `${JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        mode: "flash",
+        courseNo: result.course.courseNo,
+        courseName: result.course.name,
+        offeringId: result.offering.id,
+        classNo: result.offering.classNo,
+        capacity: result.offering.capacity,
+        studentCount: result.students.length,
+        password,
+        students: result.students,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  console.log("压测数据已准备");
+  console.log(`课程: ${result.course.courseNo} ${result.course.name}`);
+  console.log(`开课班ID: ${result.offering.id}`);
+  console.log(`容量: ${result.offering.capacity}`);
+  console.log(`学生数: ${result.students.length}`);
+  console.log(`目标文件: ${targetPath}`);
+}
+
+async function ensureCurrentTerm(tx: Prisma.TransactionClient) {
+  const currentTerm = await tx.term.findFirst({
+    where: {
+      isCurrent: true,
+    },
+  });
+
+  if (currentTerm) {
+    return currentTerm;
+  }
+
+  const now = new Date();
+  return tx.term.upsert({
+    where: {
+      code: "2025-2026-1",
+    },
+    update: {
+      isCurrent: true,
+      selectionStartsAt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+      selectionEndsAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+    },
+    create: {
+      code: "2025-2026-1",
+      name: "2025-2026学年第一学期",
+      startsAt: new Date("2025-09-01T00:00:00+08:00"),
+      endsAt: new Date("2026-01-18T23:59:59+08:00"),
+      selectionStartsAt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+      selectionEndsAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+      isCurrent: true,
+    },
+  });
+}
+
+async function clearRateLimitKeys(studentNos: string[]) {
+  const profiles = await prisma.studentProfile.findMany({
+    where: {
+      studentNo: {
+        in: studentNos,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (profiles.length > 0) {
+    await redis.del(profiles.map((profile) => `rate-limit:select:${profile.id}`));
+  }
+}
+
+async function clearOldLoadArtifacts() {
+  await Promise.all(
+    [
+      "k6-enrollment-summary.json",
+      "k6-enrollment-report.html",
+      "load-test-verification.json",
+      "load-test-verification.md",
+    ].map((fileName) => rm(`${artifactDir}/${fileName}`, { force: true })),
+  );
+}
+
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+
+    if (redis.isOpen) {
+      await redis.quit();
+    }
+  });

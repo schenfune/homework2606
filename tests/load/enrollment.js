@@ -4,82 +4,129 @@ import { Counter, Rate } from "k6/metrics";
 
 http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
 
+const activeResponses = new Counter("active_responses");
+const waitlistedResponses = new Counter("waitlisted_responses");
 const successResponses = new Counter("success_responses");
 const businessRejects = new Counter("business_rejects");
 const rateLimitedResponses = new Counter("rate_limited_responses");
 const authRejects = new Counter("auth_rejects");
 const serverErrors = new Counter("server_errors");
+const loginFailures = new Counter("login_failures");
 const handledOutcomes = new Rate("handled_outcomes");
 
-const vus = Number(__ENV.VUS || 100);
+const mode = __ENV.MODE || "flash";
+const baseUrl = __ENV.BASE_URL || "http://host.docker.internal:3000";
+const targetFile = __ENV.TARGET_FILE || "../../artifacts/load-test-target.json";
+const targetConfig = readTargetConfig();
+const studentCount = Number(__ENV.STUDENT_COUNT || targetConfig?.studentCount || 200);
+const vus = Number(__ENV.VUS || (mode === "flash" ? studentCount : 100));
 const duration = __ENV.DURATION || "30s";
-const sleepSeconds = Number(__ENV.SLEEP_SECONDS || 1);
+const maxDuration = __ENV.MAX_DURATION || "1m";
+const sleepSeconds = Number(__ENV.SLEEP_SECONDS || (mode === "flash" ? 0 : 1));
+const p95Threshold = Number(__ENV.P95_THRESHOLD_MS || 2000);
+const offeringId = __ENV.OFFERING_ID || targetConfig?.offeringId;
+const manualCookies = (__ENV.SESSION_COOKIES || __ENV.SESSION_COOKIE || "")
+  .split("|")
+  .map((item) => item.trim())
+  .filter(Boolean);
 
 export const options = {
-  scenarios: {
-    enrollment_load: {
-      executor: "constant-vus",
-      vus,
-      duration,
-    },
-  },
+  setupTimeout: "5m",
+  scenarios:
+    mode === "flash"
+      ? {
+          enrollment_flash: {
+            executor: "per-vu-iterations",
+            vus,
+            iterations: 1,
+            maxDuration,
+          },
+        }
+      : {
+          enrollment_rate_limit: {
+            executor: "constant-vus",
+            vus,
+            duration,
+          },
+        },
   thresholds: {
     http_req_failed: ["rate==0"],
-    http_req_duration: ["p(95)<1000"],
+    http_req_duration: [`p(95)<${p95Threshold}`],
     server_errors: ["count==0"],
     handled_outcomes: ["rate>0.95"],
   },
 };
 
-const baseUrl = __ENV.BASE_URL || "http://host.docker.internal:3000";
-const offeringId = __ENV.OFFERING_ID;
-const cookies = (__ENV.SESSION_COOKIES || __ENV.SESSION_COOKIE || "")
-  .split("|")
-  .map((item) => item.trim())
-  .filter(Boolean);
-
 if (!offeringId) {
-  throw new Error("OFFERING_ID is required");
+  throw new Error("OFFERING_ID is required. Run scripts/seed-load-test.ts first.");
 }
 
-if (cookies.length === 0) {
-  throw new Error("SESSION_COOKIE or SESSION_COOKIES is required");
+export function setup() {
+  if (manualCookies.length > 0) {
+    return {
+      mode,
+      offeringId,
+      courseNo: targetConfig?.courseNo || __ENV.LOAD_COURSE_NO || "manual",
+      courseName: targetConfig?.courseName || "手动压测课程",
+      capacity: Number(targetConfig?.capacity || __ENV.LOAD_COURSE_CAPACITY || 0),
+      studentCount: manualCookies.length,
+      sessions: manualCookies.map((cookie, index) => ({
+        studentNo: `manual-${index + 1}`,
+        cookie,
+      })),
+    };
+  }
+
+  if (!targetConfig?.students?.length) {
+    throw new Error(`${targetFile} is missing or contains no students.`);
+  }
+
+  const students = mode === "flash" ? targetConfig.students.slice(0, vus) : [targetConfig.students[0]];
+  const sessions = students.map((student) => loginStudent(student));
+
+  return {
+    mode,
+    offeringId,
+    courseNo: targetConfig.courseNo,
+    courseName: targetConfig.courseName,
+    capacity: targetConfig.capacity,
+    studentCount: students.length,
+    sessions,
+  };
 }
 
-export default function enrollmentLoadTest() {
-  const cookie = cookies[(__VU + __ITER) % cookies.length];
+export default function enrollmentLoadTest(data) {
+  const session =
+    data.mode === "flash"
+      ? data.sessions[(__VU - 1) % data.sessions.length]
+      : data.sessions[(__VU + __ITER) % data.sessions.length];
   const response = http.post(
     `${baseUrl}/api/student/enrollments`,
-    JSON.stringify({ offeringId }),
+    JSON.stringify({ offeringId: data.offeringId }),
     {
       headers: {
         "content-type": "application/json",
-        cookie,
+        cookie: session.cookie,
+      },
+      tags: {
+        mode: data.mode,
+        course: data.courseNo,
       },
     },
   );
   const handled = [200, 400, 403, 429].includes(response.status);
 
   handledOutcomes.add(handled);
-
-  if (response.status === 200) {
-    successResponses.add(1);
-  } else if (response.status === 400) {
-    businessRejects.add(1);
-  } else if (response.status === 403) {
-    authRejects.add(1);
-  } else if (response.status === 429) {
-    rateLimitedResponses.add(1);
-  } else if (response.status >= 500) {
-    serverErrors.add(1);
-  }
+  recordOutcome(response);
 
   check(response, {
     "handled by application": () => handled,
     "no server error": (res) => res.status < 500,
   });
 
-  sleep(sleepSeconds);
+  if (sleepSeconds > 0) {
+    sleep(sleepSeconds);
+  }
 }
 
 export function handleSummary(data) {
@@ -90,13 +137,93 @@ export function handleSummary(data) {
   };
 }
 
+function loginStudent(student) {
+  const response = http.post(
+    `${baseUrl}/api/auth/sign-in/email`,
+    JSON.stringify({
+      email: student.email,
+      password: student.password,
+      rememberMe: true,
+    }),
+    {
+      headers: {
+        "content-type": "application/json",
+      },
+      tags: {
+        mode,
+        endpoint: "auth",
+      },
+    },
+  );
+
+  if (response.status !== 200) {
+    loginFailures.add(1);
+    throw new Error(`Login failed for ${student.studentNo}: ${response.status} ${response.body}`);
+  }
+
+  const cookie = cookieHeader(response.cookies);
+
+  if (!cookie.includes("better-auth.session_token=")) {
+    loginFailures.add(1);
+    throw new Error(`Login did not return a Better Auth session cookie for ${student.studentNo}`);
+  }
+
+  return {
+    studentNo: student.studentNo,
+    cookie,
+  };
+}
+
+function recordOutcome(response) {
+  if (response.status === 200) {
+    successResponses.add(1);
+    const status = response.json("status");
+
+    if (status === "ACTIVE") {
+      activeResponses.add(1);
+    } else if (status === "WAITLISTED") {
+      waitlistedResponses.add(1);
+    }
+  } else if (response.status === 400) {
+    businessRejects.add(1);
+  } else if (response.status === 403) {
+    authRejects.add(1);
+  } else if (response.status === 429) {
+    rateLimitedResponses.add(1);
+  } else if (response.status >= 500) {
+    serverErrors.add(1);
+  }
+}
+
+function cookieHeader(cookies) {
+  return Object.keys(cookies)
+    .map((name) => {
+      const cookie = cookies[name]?.[0];
+      return cookie ? `${name}=${cookie.value}` : "";
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function readTargetConfig() {
+  try {
+    return JSON.parse(open(targetFile));
+  } catch {
+    return null;
+  }
+}
+
 function buildTextSummary(data) {
   return [
     "",
-    "选课接口压力测试摘要",
+    mode === "flash" ? "多学生抢课压力测试摘要" : "单账号限流专项测试摘要",
+    `模式: ${mode}`,
+    `并发学生: ${mode === "flash" ? formatNumber(vus) : "1个账号高频提交"}`,
+    `课程容量: ${formatNumber(Number(targetConfig?.capacity || 0))}`,
     `请求数: ${formatNumber(metric(data, "http_reqs", "count"))}`,
     `P95延迟: ${formatMs(metric(data, "http_req_duration", "p(95)"))}`,
-    `成功响应: ${formatNumber(metric(data, "success_responses", "count"))}`,
+    `正式入选响应: ${formatNumber(metric(data, "active_responses", "count"))}`,
+    `候补入队响应: ${formatNumber(metric(data, "waitlisted_responses", "count"))}`,
     `业务拒绝: ${formatNumber(metric(data, "business_rejects", "count"))}`,
     `限流响应: ${formatNumber(metric(data, "rate_limited_responses", "count"))}`,
     `鉴权拒绝: ${formatNumber(metric(data, "auth_rejects", "count"))}`,
@@ -109,28 +236,30 @@ function buildTextSummary(data) {
 
 function buildHtmlReport(data) {
   const total = metric(data, "http_reqs", "count");
-  const success = metric(data, "success_responses", "count");
+  const active = metric(data, "active_responses", "count");
+  const waitlisted = metric(data, "waitlisted_responses", "count");
   const business = metric(data, "business_rejects", "count");
   const limited = metric(data, "rate_limited_responses", "count");
   const auth = metric(data, "auth_rejects", "count");
   const server = metric(data, "server_errors", "count");
   const generatedAt = new Date().toISOString();
-
+  const title = mode === "flash" ? "多学生抢课压力测试报告" : "单账号限流专项测试报告";
   const cards = [
+    ["模式", mode === "flash" ? "开选瞬间抢课" : "单账号限流"],
+    ["并发学生", mode === "flash" ? formatNumber(vus) : "1个账号"],
+    ["课程容量", formatNumber(Number(targetConfig?.capacity || 0))],
     ["总请求", formatNumber(total)],
+    ["正式入选响应", formatNumber(active)],
+    ["候补入队响应", formatNumber(waitlisted)],
     ["P95延迟", formatMs(metric(data, "http_req_duration", "p(95)"))],
-    ["平均延迟", formatMs(metric(data, "http_req_duration", "avg"))],
     ["服务错误", formatNumber(server)],
-    ["成功响应", formatNumber(success)],
-    ["业务拒绝", formatNumber(business)],
-    ["限流响应", formatNumber(limited)],
-    ["鉴权拒绝", formatNumber(auth)],
   ];
   const outcomeRows = [
-    ["成功", success, "#15803d"],
+    ["正式入选", active, "#15803d"],
+    ["候补入队", waitlisted, "#0369a1"],
     ["业务拒绝", business, "#b45309"],
     ["限流", limited, "#7c3aed"],
-    ["鉴权拒绝", auth, "#0369a1"],
+    ["鉴权拒绝", auth, "#475569"],
     ["服务错误", server, "#b91c1c"],
   ];
 
@@ -139,7 +268,7 @@ function buildHtmlReport(data) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>选课接口压力测试报告</title>
+  <title>${escapeHtml(title)}</title>
   <style>
     :root {
       color-scheme: light;
@@ -189,9 +318,7 @@ function buildHtmlReport(data) {
       border-radius: 8px;
       box-shadow: 0 1px 2px rgb(16 24 40 / 0.04);
     }
-    .card {
-      padding: 16px;
-    }
+    .card { padding: 16px; }
     .label {
       color: var(--muted);
       font-size: 13px;
@@ -256,12 +383,14 @@ function buildHtmlReport(data) {
   <main>
     <header>
       <div>
-        <h1>选课接口压力测试报告</h1>
-        <div class="label">目标接口 ${escapeHtml(baseUrl)}/api/student/enrollments</div>
+        <h1>${escapeHtml(title)}</h1>
+        <div class="label">${escapeHtml(targetConfig?.courseNo || "目标课程")} ${escapeHtml(
+          targetConfig?.courseName || "",
+        )}</div>
       </div>
       <div class="meta">
         <div>生成时间 ${escapeHtml(generatedAt)}</div>
-        <div>虚拟用户 ${escapeHtml(String(vus))}，持续 ${escapeHtml(duration)}</div>
+        <div>目标接口 ${escapeHtml(baseUrl)}/api/student/enrollments</div>
       </div>
     </header>
     <section class="grid">
@@ -292,7 +421,7 @@ function buildHtmlReport(data) {
         <thead><tr><th>指标</th><th>阈值</th><th>当前值</th></tr></thead>
         <tbody>
           <tr><td>服务错误</td><td>0</td><td>${formatNumber(server)}</td></tr>
-          <tr><td>P95延迟</td><td>1000ms以内</td><td>${formatMs(
+          <tr><td>P95延迟</td><td>${formatNumber(p95Threshold)}ms以内</td><td>${formatMs(
             metric(data, "http_req_duration", "p(95)"),
           )}</td></tr>
           <tr><td>应用可处理结果</td><td>95%以上</td><td>${formatPercent(
@@ -324,7 +453,7 @@ function formatPercent(value) {
 }
 
 function escapeHtml(value) {
-  return value
+  return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")

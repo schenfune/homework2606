@@ -3,7 +3,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type AdminShellProps = {
-  active: "stats" | "window" | "logs";
+  active: "stats" | "window" | "logs" | "ops";
   children: ReactNode;
   userName: string;
 };
@@ -11,6 +11,7 @@ type AdminShellProps = {
 const adminTabs = [
   { href: "/admin/stats", label: "课程统计", value: "stats" },
   { href: "/admin/window", label: "开放期", value: "window" },
+  { href: "/admin/ops", label: "一致性运维", value: "ops" },
   { href: "/admin/logs", label: "操作日志", value: "logs" },
 ] as const;
 

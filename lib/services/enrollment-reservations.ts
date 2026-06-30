@@ -30,6 +30,17 @@ export type StudentReservation = {
   waitlistPosition: number | null;
 };
 
+export type EnrollmentReservationRecord = {
+  key: string;
+  profileId: string;
+  offeringId: string;
+  status: ReservationStatus;
+  kind: ReservationKind | null;
+  waitlistPosition: number | null;
+  createdAt: string | null;
+  streamId: string | null;
+};
+
 export const reservationConfig = {
   reservationTtlSeconds: 30 * 60,
   streamKey: "enrollment:writeback:stream",
@@ -309,6 +320,81 @@ export async function clearOfferingReservationState(offeringId: string) {
 
 export async function getRedisGateSnapshot(offeringId: string) {
   return redis.hGetAll(gateKey(offeringId));
+}
+
+export async function getEnrollmentReservationRecords() {
+  const keys = await redis.keys("enrollment:reservation:*:*");
+  const records: EnrollmentReservationRecord[] = [];
+
+  for (const key of keys) {
+    const value = await redis.hGetAll(key);
+    const parts = key.split(":");
+    const status = value.status as ReservationStatus | undefined;
+
+    if (!status) {
+      continue;
+    }
+
+    records.push({
+      key,
+      profileId: value.profileId || parts[2] || "",
+      offeringId: value.offeringId || parts[3] || "",
+      status,
+      kind: value.kind === "ACTIVE" || value.kind === "WAITLIST" ? value.kind : null,
+      waitlistPosition: value.waitlistPosition ? Number(value.waitlistPosition) : null,
+      createdAt: value.createdAt || null,
+      streamId: value.streamId || null,
+    });
+  }
+
+  return records;
+}
+
+export async function requeueReservationWriteback(record: EnrollmentReservationRecord) {
+  if (
+    !record.kind ||
+    !record.profileId ||
+    !record.offeringId ||
+    (record.status !== "ACTIVE_RESERVED" && record.status !== "WAITLIST_RESERVED")
+  ) {
+    return false;
+  }
+
+  const fields = [
+    "reservationKey",
+    record.key,
+    "profileId",
+    record.profileId,
+    "offeringId",
+    record.offeringId,
+    "kind",
+    record.kind,
+    "createdAt",
+    new Date().toISOString(),
+  ];
+
+  if (record.kind === "WAITLIST" && record.waitlistPosition !== null) {
+    fields.push("waitlistPosition", String(record.waitlistPosition));
+  }
+
+  const streamId = await redis.sendCommand([
+    "XADD",
+    reservationConfig.streamKey,
+    "*",
+    ...fields,
+  ]);
+  await redis.hSet(record.key, "streamId", String(streamId));
+  await redis.expire(record.key, reservationConfig.reservationTtlSeconds);
+
+  return true;
+}
+
+export async function deleteEnrollmentReservationRecord(record: EnrollmentReservationRecord) {
+  if (record.kind === "ACTIVE" && record.offeringId) {
+    await decrementActiveGate(record.offeringId);
+  }
+
+  await redis.del(record.key);
 }
 
 function normalizeReservationResult(result: unknown): ReservationResult {

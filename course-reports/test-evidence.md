@@ -30,7 +30,7 @@
 | 测试类型 | 目标 | 覆盖内容 | 优先级 |
 | --- | --- | --- | --- |
 | 单元测试 | 验证时间冲突算法 | 节次重叠、周次重叠、无冲突边界 | 高 |
-| 集成测试 | 验证核心业务规则 | 选课、重复提交、候补、递补、停开课程 | 高 |
+| 集成测试 | 验证核心业务规则 | 选课、重复提交、候补、递补、停开课程、写回运维 | 高 |
 | 构建检查 | 验证类型和页面编译 | Next构建、服务端组件、Prisma类型 | 高 |
 | 静态检查 | 验证代码规范 | ESLint规则、导入风格 | 中 |
 | 压测脚本 | 验证并发入口 | HTTP选课接口、限流阈值、失败率 | 中 |
@@ -58,6 +58,8 @@
 | TC12 | 管理员详情 | 存在退课、移除和日志 | 查询管理端dashboard | 详情含名单和相关日志 | `tests/admin.integration.test.ts` |
 | TC13 | 停开含候补课程 | 课程含有效和候补登记 | 管理员停开课程 | 两类登记统一改为`REMOVED` | `tests/admin.integration.test.ts` |
 | TC14 | Redis预占写回 | 学生提交正式选课或候补 | 处理Redis Stream任务 | Worker幂等写入登记并确认预占 | `tests/enrollment.integration.test.ts` |
+| TC15 | 运维处理写回 | Redis存在正式或候补待写回 | 管理员触发处理写回 | DB登记写入，待写回数量下降 | `tests/enrollment-ops.integration.test.ts` |
+| TC16 | 运维清理失败预占 | Redis存在FAILED或悬空预占 | 管理员触发清理失败预占 | 失败/悬空记录删除，正常预占保留 | `tests/enrollment-ops.integration.test.ts` |
 
 ## 7.4 命令验证记录
 
@@ -100,6 +102,7 @@ pnpm build
 | 集成测试互相重置数据库 | 测试文件共享同一个开发库 | 禁用测试文件并行执行 | `vitest run` |
 | 抢课P95偏高 | 同步事务在请求线程中排队写库 | 用Redis Lua脚本完成入口预占，Worker异步写回PostgreSQL | k6多学生抢课报告 |
 | Redis Stream解析不兼容 | Redis客户端返回对象形态而非RESP数组形态 | 写回Worker兼容对象和数组两种解析结果 | Worker集成测试 |
+| 异步写回状态不直观 | Redis预占与DB最终登记之间存在短暂中间状态 | 增加一致性运维工作区，展示待写回、失败和校验结果 | 运维页面、运维集成测试 |
 
 ## 7.6 压测说明
 

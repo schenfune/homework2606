@@ -135,6 +135,37 @@ sequenceDiagram
 
 图3.4 管理员停开课程时序图
 
-## 3.4.5 时序分析结论
+## 3.4.5 管理员处理写回积压时序
 
-四个时序图共同说明系统的职责分配。页面只提交用户意图，服务层集中处理规则和入口预占，RedisSeatGate负责高并发容量闸门，Worker负责把临时预占确认成PostgreSQL最终登记。数据库保存最终领域状态，日志保存审计事实。学生锁处理退课等同步动作，开课班锁保护写回、候补顺位和递补顺序，Redis Lua脚本保证入口阶段原子预占，二者共同支撑高并发下的容量一致性。
+该场景展示异步架构的运维闭环。管理员可以观察Redis预占和PostgreSQL登记之间的中间状态，并主动触发一批写回处理。
+
+```mermaid
+sequenceDiagram
+    actor Admin as 管理员
+    participant Page as 一致性运维工作区
+    participant Ops as EnrollmentOpsService
+    participant Gate as RedisSeatGate
+    participant Stream as Redis Stream
+    participant Worker as EnrollmentWritebackWorker
+    participant DB as PostgreSQL
+
+    Admin->>Page: 打开一致性运维
+    Page->>Ops: 查询一致性快照
+    Ops->>Gate: 扫描gate和reservation
+    Ops->>DB: 统计ACTIVE和WAITLISTED登记
+    Ops-->>Page: 返回正常待写回需处理异常状态
+    Admin->>Page: 点击处理写回
+    Page->>Ops: 提交运维动作
+    Ops->>Gate: 重投ACTIVE_RESERVED和WAITLIST_RESERVED
+    Ops->>Stream: 追加写回任务
+    Ops->>Worker: 处理一批写回任务
+    Worker->>DB: 幂等写入最终登记
+    Worker->>Gate: 标记确认或释放失败预占
+    Ops-->>Page: 刷新一致性快照
+```
+
+图3.5 管理员处理写回积压时序图
+
+## 3.4.6 时序分析结论
+
+五个时序图共同说明系统的职责分配。页面只提交用户意图，服务层集中处理规则和入口预占，RedisSeatGate负责高并发容量闸门，Worker负责把临时预占确认成PostgreSQL最终登记，EnrollmentOpsService负责观察、重投和清理异步中间状态。数据库保存最终领域状态，日志保存审计事实。学生锁处理退课等同步动作，开课班锁保护写回、候补顺位和递补顺序，Redis Lua脚本保证入口阶段原子预占，二者共同支撑高并发下的容量一致性。

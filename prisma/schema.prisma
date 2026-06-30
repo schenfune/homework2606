@@ -7,55 +7,90 @@ datasource db {
 }
 
 enum Role {
+  /// 学生
   STUDENT
+  /// 管理员
   ADMIN
 }
 
 enum CourseCategory {
+  /// 必修课
   REQUIRED
+  /// 专业选修
   MAJOR_ELECTIVE
+  /// 公共选修
   PUBLIC_ELECTIVE
 }
 
 enum OfferingStatus {
+  /// 开放
   PUBLISHED
+  /// 名单冻结
   CLOSED
+  /// 已停开
   CANCELED
 }
 
 enum RegistrationStatus {
+  /// 已选
   ACTIVE
+  /// 候补中
   WAITLISTED
+  /// 已退课
   DROPPED
+  /// 停开移除
   REMOVED
 }
 
 enum OperationType {
+  /// 学生选课
   COURSE_SELECTED
+  /// 加入候补
   COURSE_WAITLISTED
+  /// 学生退课
   COURSE_DROPPED
+  /// 候补转入
   WAITLIST_PROMOTED
+  /// 退出候补
   WAITLIST_DROPPED
+  /// 冻结名单
   OFFERING_CLOSED
+  /// 停开课程
   OFFERING_CANCELED
+  /// 调整时间
   TERM_WINDOW_UPDATED
+  /// 导出结果
   RESULT_EXPORTED
+  /// 接口查询
   RESULT_API_ACCESSED
 }
 
 model User {
+  /// 用户ID
   id              String    @id @default(cuid())
+  /// 显示姓名
   name            String
+  /// 邮箱
   email           String    @unique
+  /// 邮箱验证
   emailVerified   Boolean   @default(false)
+  /// 头像
   image           String?
+  /// 登录账号
   username        String?   @unique
+  /// 展示账号
   displayUsername String?
+  /// 用户角色
   role            Role      @default(STUDENT)
+  /// 档案ID
   profileId       String?
+  /// 创建时间
   createdAt       DateTime  @default(now())
+  /// 更新时间
   updatedAt       DateTime  @updatedAt
+  /// 认证账号
   accounts        Account[]
+  /// 登录会话
   sessions        Session[]
 
   @@index([role])
@@ -63,14 +98,23 @@ model User {
 }
 
 model Session {
+  /// 会话ID
   id        String   @id @default(cuid())
+  /// 过期时间
   expiresAt DateTime
+  /// 会话令牌
   token     String   @unique
+  /// 创建时间
   createdAt DateTime @default(now())
+  /// 更新时间
   updatedAt DateTime @updatedAt
+  /// IP地址
   ipAddress String?
+  /// 浏览器信息
   userAgent String?
+  /// 用户ID
   userId    String
+  /// 所属用户
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -78,19 +122,33 @@ model Session {
 }
 
 model Account {
+  /// 账号ID
   id                    String    @id @default(cuid())
+  /// 平台账号
   accountId             String
+  /// 登录方式
   providerId            String
+  /// 用户ID
   userId                String
+  /// 所属用户
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 访问令牌
   accessToken           String?
+  /// 刷新令牌
   refreshToken          String?
+  /// 身份令牌
   idToken               String?
+  /// 访问过期
   accessTokenExpiresAt  DateTime?
+  /// 刷新过期
   refreshTokenExpiresAt DateTime?
+  /// 授权范围
   scope                 String?
+  /// 密码哈希
   password              String?
+  /// 创建时间
   createdAt             DateTime  @default(now())
+  /// 更新时间
   updatedAt             DateTime  @updatedAt
 
   @@index([userId])
@@ -98,123 +156,207 @@ model Account {
 }
 
 model Verification {
+  /// 验证ID
   id         String    @id @default(cuid())
+  /// 验证标识
   identifier String
+  /// 验证值
   value      String
+  /// 过期时间
   expiresAt  DateTime
+  /// 创建时间
   createdAt  DateTime? @default(now())
+  /// 更新时间
   updatedAt  DateTime? @updatedAt
 
   @@index([identifier])
   @@map("verification")
 }
 
+// 学院
 model Department {
-  id       String    @id @default(cuid())
-  code     String    @unique
-  name     String
-  majors   Major[]
-  courses  Course[]
-  students StudentProfile[]
+  /// 学院ID
+  id               String            @id @default(cuid())
+  /// 学院代码
+  code             String            @unique
+  /// 学院名称
+  name             String
+  /// 下属专业
+  majors           Major[]
+  /// 开设课程
+  courses          Course[]
+  /// 学生列表
+  students         StudentProfile[]
+  /// 资格规则
   eligibilityRules EligibilityRule[]
 }
 
+// 专业
 model Major {
-  id           String           @id @default(cuid())
-  code         String           @unique
+  /// 专业ID
+  id           String            @id @default(cuid())
+  /// 专业代码
+  code         String            @unique
+  /// 专业名称
   name         String
+  /// 学院ID
   departmentId String
-  department   Department       @relation(fields: [departmentId], references: [id])
+  /// 所属学院
+  department   Department        @relation(fields: [departmentId], references: [id])
+  /// 学生列表
   students     StudentProfile[]
+  /// 资格规则
   rules        EligibilityRule[]
 
   @@index([departmentId])
 }
 
+// 学生信息
 model StudentProfile {
-  id           String               @id @default(cuid())
-  studentNo    String               @unique
-  name         String
-  grade        Int
-  departmentId String
-  majorId      String
-  department   Department           @relation(fields: [departmentId], references: [id])
-  major        Major                @relation(fields: [majorId], references: [id])
+  /// 学生ID
+  id            String               @id @default(cuid())
+  /// 学号
+  studentNo     String               @unique
+  /// 姓名
+  name          String
+  /// 年级
+  grade         Int
+  /// 学院ID
+  departmentId  String
+  /// 专业ID
+  majorId       String
+  /// 所属学院
+  department    Department           @relation(fields: [departmentId], references: [id])
+  /// 所属专业
+  major         Major                @relation(fields: [majorId], references: [id])
+  /// 选课记录
   registrations CourseRegistration[]
 
   @@index([departmentId, majorId, grade])
 }
 
+// 学期
 model Term {
-  id              String           @id @default(cuid())
-  code            String           @unique
-  name            String
-  startsAt        DateTime
-  endsAt          DateTime
+  /// 学期ID
+  id                String           @id @default(cuid())
+  /// 学期代码
+  code              String           @unique
+  /// 学期名称
+  name              String
+  /// 学期开始
+  startsAt          DateTime
+  /// 学期结束
+  endsAt            DateTime
+  /// 选课开始
   selectionStartsAt DateTime
+  /// 选课结束
   selectionEndsAt   DateTime
-  isCurrent       Boolean          @default(false)
-  offerings       CourseOffering[]
+  /// 当前学期
+  isCurrent         Boolean          @default(false)
+  /// 开课班
+  offerings         CourseOffering[]
 
   @@index([isCurrent])
 }
 
+// 课程
 model Course {
-  id           String         @id @default(cuid())
-  courseNo     String         @unique
+  /// 课程ID
+  id           String           @id @default(cuid())
+  /// 课程号
+  courseNo     String           @unique
+  /// 课程名
   name         String
+  /// 学分
   credits      Int
+  /// 课程类别
   category     CourseCategory
+  /// 学院ID
   departmentId String
-  department   Department     @relation(fields: [departmentId], references: [id])
+  /// 开课学院
+  department   Department       @relation(fields: [departmentId], references: [id])
+  /// 开课班
   offerings    CourseOffering[]
 
   @@index([category])
   @@index([departmentId])
 }
 
+// 开课班
 model CourseOffering {
-  id             String               @id @default(cuid())
-  classNo        String
-  capacity       Int
-  enrolledCount  Int                  @default(0)
-  teacherName    String
-  status         OfferingStatus       @default(PUBLISHED)
-  canceledReason String?
-  termId         String
-  courseId       String
-  term           Term                 @relation(fields: [termId], references: [id])
-  course         Course               @relation(fields: [courseId], references: [id])
-  meetingTimes   MeetingTime[]
+  /// 开课班ID
+  id               String               @id @default(cuid())
+  /// 班号
+  classNo          String
+  /// 名额
+  capacity         Int
+  /// 已选人数
+  enrolledCount    Int                  @default(0)
+  /// 任课教师
+  teacherName      String
+  /// 开课状态
+  status           OfferingStatus       @default(PUBLISHED)
+  /// 停开原因
+  canceledReason   String?
+  /// 学期ID
+  termId           String
+  /// 课程ID
+  courseId         String
+  /// 所属学期
+  term             Term                 @relation(fields: [termId], references: [id])
+  /// 对应课程
+  course           Course               @relation(fields: [courseId], references: [id])
+  /// 上课时间
+  meetingTimes     MeetingTime[]
+  /// 资格规则
   eligibilityRules EligibilityRule[]
-  registrations  CourseRegistration[]
+  /// 选课记录
+  registrations    CourseRegistration[]
 
   @@unique([termId, courseId, classNo])
   @@index([termId, status])
   @@index([courseId])
 }
 
+// 上课时间
 model MeetingTime {
+  /// 时间ID
   id          String         @id @default(cuid())
+  /// 星期
   weekday     Int
+  /// 起始节次
   startPeriod Int
+  /// 结束节次
   endPeriod   Int
+  /// 起始周
   startWeek   Int
+  /// 结束周
   endWeek     Int
+  /// 开课班ID
   offeringId  String
+  /// 所属开课班
   offering    CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
 
   @@index([offeringId])
 }
 
+// 选课资格规则：某一门课允许哪些专业的学生选
 model EligibilityRule {
+  /// 规则ID
   id           String         @id @default(cuid())
+  /// 适用年级
   grade        Int
+  /// 学院ID
   departmentId String
+  /// 专业ID
   majorId      String
+  /// 开课班ID
   offeringId   String
+  /// 适用学院
   department   Department     @relation(fields: [departmentId], references: [id])
+  /// 适用专业
   major        Major          @relation(fields: [majorId], references: [id])
+  /// 对应开课班
   offering     CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
 
   @@unique([offeringId, majorId, grade])
@@ -222,15 +364,25 @@ model EligibilityRule {
 }
 
 model CourseRegistration {
+  /// 记录ID
   id               String             @id @default(cuid())
+  /// 名单状态
   status           RegistrationStatus @default(ACTIVE)
+  /// 加入时间
   registeredAt     DateTime           @default(now())
+  /// 候补时间
   waitlistedAt     DateTime?
+  /// 候补排队
   waitlistPosition Int?
+  /// 更新时间
   updatedAt        DateTime           @updatedAt
+  /// 学生ID
   studentId        String
+  /// 开课班ID
   offeringId       String
+  /// 对应学生
   student          StudentProfile     @relation(fields: [studentId], references: [id])
+  /// 对应开课班
   offering         CourseOffering     @relation(fields: [offeringId], references: [id])
 
   @@unique([studentId, offeringId])
@@ -240,14 +392,22 @@ model CourseRegistration {
 }
 
 model OperationLog {
-  id          String        @id @default(cuid())
-  type        OperationType
-  actorRole   Role
-  actorId     String?
-  targetId    String?
-  message     String
-  metadata    Json?
-  createdAt   DateTime      @default(now())
+  /// 日志ID
+  id        String        @id @default(cuid())
+  /// 操作类型
+  type      OperationType
+  /// 操作角色
+  actorRole Role
+  /// 操作者ID
+  actorId   String?
+  /// 目标ID
+  targetId  String?
+  /// 日志内容
+  message   String
+  /// 附加数据
+  metadata  Json?
+  /// 创建时间
+  createdAt DateTime      @default(now())
 
   @@index([type, createdAt])
   @@index([actorRole, createdAt])

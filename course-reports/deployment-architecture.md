@@ -36,6 +36,8 @@ docker compose -f docker-compose.lb.yml build
 docker compose -f docker-compose.lb.yml up
 ```
 
+若修改过`Dockerfile`或应用代码，需要重新执行`build`后再`up`，否则Nginx可能仍然连接到旧镜像启动失败的应用容器。
+
 健康检查：
 
 ```powershell

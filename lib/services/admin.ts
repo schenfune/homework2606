@@ -172,7 +172,7 @@ export async function updateTermWindow({
         actorRole: Role.ADMIN,
         actorId: adminId,
         targetId: term.id,
-        message: "管理员更新选课开放期",
+        message: "管理员调整选课时间",
         metadata: {
           selectionStartsAt,
           selectionEndsAt,

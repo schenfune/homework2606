@@ -18,7 +18,7 @@ export default async function AdminWindowPage() {
     <AdminShell active="window" userName={user.name}>
       <Card className="max-w-xl">
         <CardHeader>
-          <CardTitle>选课开放期</CardTitle>
+          <CardTitle>选课时间</CardTitle>
         </CardHeader>
         <CardContent>
           <form action={updateTermWindowAction} className="space-y-4">
@@ -40,7 +40,7 @@ export default async function AdminWindowPage() {
                 type="datetime-local"
               />
             </div>
-            <Button>保存开放期</Button>
+            <Button>保存时间</Button>
           </form>
         </CardContent>
       </Card>

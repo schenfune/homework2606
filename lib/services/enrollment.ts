@@ -627,7 +627,7 @@ async function promoteFirstWaitlistedRegistration({
       actorRole: Role.STUDENT,
       actorId: candidate.studentId,
       targetId: offeringId,
-      message: `${candidate.student.name}递补${courseName}`,
+      message: `${candidate.student.name}从候补转入${courseName}`,
       metadata: {
         previousWaitlistPosition: candidate.waitlistPosition,
       },
@@ -681,19 +681,19 @@ export function buildCourseRuleChecks({
   return [
     {
       code: "TERM_WINDOW",
-      label: "开放期",
+      label: "选课时间",
       status: termOpen ? "pass" : "block",
-      detail: termOpen ? "当前开放" : "未开放",
+      detail: termOpen ? "可以提交" : "不在开放时间",
     },
     {
       code: "OFFERING_STATUS",
-      label: "课程状态",
+      label: "开课状态",
       status: offering.status === OfferingStatus.PUBLISHED ? "pass" : "block",
       detail: offeringStatusDetail(offering.status),
     },
     {
       code: "COURSE_CATEGORY",
-      label: "课程类别",
+      label: "课程类型",
       status:
         offering.course.category === CourseCategory.REQUIRED
           ? "block"
@@ -703,37 +703,37 @@ export function buildCourseRuleChecks({
           : "pass",
       detail:
         offering.course.category === CourseCategory.REQUIRED
-          ? "必修锁定"
+          ? "已由教务安排"
           : ownRegistrationStatus === RegistrationStatus.ACTIVE
-          ? "已入课表"
+          ? "已在课表"
           : ownRegistrationStatus === RegistrationStatus.WAITLISTED
           ? "候补中"
-          : "学生可选",
+          : "可以自主选择",
     },
     {
       code: "ELIGIBILITY",
-      label: "专业年级",
+      label: "适合对象",
       status: eligible ? "pass" : "block",
       detail:
         offering.course.category === CourseCategory.MAJOR_ELECTIVE
           ? eligible
-            ? "范围匹配"
-            : "范围不匹配"
-          : "不限专业",
+            ? "专业和年级符合"
+            : "专业或年级不符合"
+          : "不限制专业年级",
     },
     {
       code: "CAPACITY",
-      label: "容量",
+      label: "名额",
       status: full ? "info" : "pass",
       detail: full
-        ? `${offering.enrolledCount}/${offering.capacity} · 可候补`
+        ? `${offering.enrolledCount}/${offering.capacity} · 已满，可候补`
         : `${offering.enrolledCount}/${offering.capacity}`,
     },
     {
       code: "TIME_CONFLICT",
-      label: "时间冲突",
+      label: "上课时间",
       status: conflictCourse ? "block" : "pass",
-      detail: conflictCourse ? conflictCourse.courseName : "无冲突",
+      detail: conflictCourse ? `与${conflictCourse.courseName}冲突` : "没有冲突",
     },
   ];
 }
@@ -767,7 +767,7 @@ function ruleCheckToReason(check: CourseRuleCheck) {
   if (check.code === "CAPACITY") return "课程容量已满";
   if (check.code === "TIME_CONFLICT") return "上课时间冲突";
   if (check.code === "OFFERING_STATUS") {
-    return check.detail === "已停开" ? "课程已停开" : "课程名单已冻结";
+    return check.detail.includes("停开") ? "课程已停开" : "课程名单已冻结";
   }
 
   return "不可选";
@@ -775,8 +775,8 @@ function ruleCheckToReason(check: CourseRuleCheck) {
 
 function offeringStatusDetail(status: OfferingStatus) {
   if (status === OfferingStatus.PUBLISHED) return "开放";
-  if (status === OfferingStatus.CLOSED) return "已冻结";
-  return "已停开";
+  if (status === OfferingStatus.CLOSED) return "名单已冻结";
+  return "课程已停开";
 }
 
 function isTermOpen(term: { selectionStartsAt: Date; selectionEndsAt: Date }) {

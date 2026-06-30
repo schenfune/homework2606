@@ -14,7 +14,7 @@ export async function GET() {
 
   const rows = await getEnrollmentResultSnapshot();
   const csv = [
-    ["课程号", "课程名", "班号", "课程类别", "学号", "姓名", "专业", "年级", "状态", "选课时间"],
+    ["课程号", "课程名", "班号", "课程类别", "学号", "姓名", "专业", "年级", "名单状态", "加入时间"],
     ...rows.map((row) => [
       row.offering.course.courseNo,
       row.offering.course.name,

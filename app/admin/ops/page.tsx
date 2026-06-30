@@ -32,36 +32,36 @@ export default async function AdminOpsPage() {
     <AdminShell active="ops" userName={user.name}>
       <div className="grid gap-4 lg:grid-cols-6">
         <MetricBox label="正常" value={`${dashboard.summary.NORMAL}`} />
-        <MetricBox label="待写回" value={`${dashboard.summary.PENDING}`} />
-        <MetricBox label="需处理" value={`${dashboard.summary.ACTION_REQUIRED}`} />
+        <MetricBox label="待入库" value={`${dashboard.summary.PENDING}`} />
+        <MetricBox label="需清理" value={`${dashboard.summary.ACTION_REQUIRED}`} />
         <MetricBox label="异常" value={`${dashboard.summary.ERROR}`} />
         <MetricBox
-          label="正式待写"
+          label="已选待入库"
           value={`${dashboard.summary.pendingActive}`}
         />
         <MetricBox
-          label="候补待写"
+          label="候补待入库"
           value={`${dashboard.summary.pendingWaitlist}`}
         />
       </div>
       <Card>
         <CardHeader>
           <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-            <CardTitle>一致性运维</CardTitle>
+            <CardTitle>选课数据校验</CardTitle>
             <div className="flex flex-wrap gap-2">
               <form action={processOpsWritebackAction}>
-                <Button size="sm">处理写回</Button>
+                <Button size="sm">同步名单</Button>
               </form>
               <form action={clearFailedReservationsAction}>
                 <Button size="sm" variant="outline">
-                  清理失败预占
+                  清理失败记录
                 </Button>
               </form>
               <Link
                 className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
                 href="/admin/ops"
               >
-                刷新状态
+                刷新
               </Link>
             </div>
           </div>
@@ -71,17 +71,17 @@ export default async function AdminOpsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>状态</TableHead>
+                  <TableHead>检查结果</TableHead>
                   <TableHead>课程</TableHead>
-                  <TableHead>容量</TableHead>
-                  <TableHead>DB有效</TableHead>
-                  <TableHead>DB候补</TableHead>
-                  <TableHead>已选计数</TableHead>
-                  <TableHead>Redis正式</TableHead>
-                  <TableHead>正式待写</TableHead>
-                  <TableHead>候补待写</TableHead>
-                  <TableHead>失败</TableHead>
-                  <TableHead>校验</TableHead>
+                  <TableHead>名额</TableHead>
+                  <TableHead>最终已选</TableHead>
+                  <TableHead>最终候补</TableHead>
+                  <TableHead>课程已选数</TableHead>
+                  <TableHead>抢课入口已选</TableHead>
+                  <TableHead>已选待入库</TableHead>
+                  <TableHead>候补待入库</TableHead>
+                  <TableHead>失败记录</TableHead>
+                  <TableHead>检查项</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -109,16 +109,16 @@ export default async function AdminOpsPage() {
                     <TableCell>
                       <div className="flex flex-wrap gap-1.5">
                         <CheckBadge ok={offering.checks.enrolledCounterMatchesActive}>
-                          计数
+                          已选数
                         </CheckBadge>
                         <CheckBadge ok={offering.checks.activeNotGreaterThanCapacity}>
-                          容量
+                          不超额
                         </CheckBadge>
                         <CheckBadge ok={offering.checks.redisActiveNotGreaterThanCapacity}>
-                          闸门
+                          抢课入口
                         </CheckBadge>
                         <CheckBadge ok={offering.checks.noPendingWriteback}>
-                          写回
+                          已入库
                         </CheckBadge>
                       </div>
                     </TableCell>
@@ -156,8 +156,8 @@ function CheckBadge({
 
 function statusLabel(status: EnrollmentOpsStatus) {
   if (status === "NORMAL") return "正常";
-  if (status === "PENDING") return "待写回";
-  if (status === "ACTION_REQUIRED") return "需处理";
+  if (status === "PENDING") return "待入库";
+  if (status === "ACTION_REQUIRED") return "需清理";
   return "异常";
 }
 

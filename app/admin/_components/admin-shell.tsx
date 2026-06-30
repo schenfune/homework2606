@@ -10,8 +10,8 @@ type AdminShellProps = {
 
 const adminTabs = [
   { href: "/admin/stats", label: "课程统计", value: "stats" },
-  { href: "/admin/window", label: "开放期", value: "window" },
-  { href: "/admin/ops", label: "一致性运维", value: "ops" },
+  { href: "/admin/window", label: "选课时间", value: "window" },
+  { href: "/admin/ops", label: "数据校验", value: "ops" },
   { href: "/admin/logs", label: "操作日志", value: "logs" },
 ] as const;
 

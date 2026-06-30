@@ -7,7 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { dateTimeLabel } from "@/lib/format";
+import { dateTimeLabel, operationTypeLabel, roleLabel } from "@/lib/format";
 import type { getAdminDashboard } from "@/lib/services/admin";
 
 type LogTableProps = {
@@ -20,8 +20,8 @@ export function LogTable({ logs }: LogTableProps) {
       <TableHeader>
         <TableRow>
           <TableHead>时间</TableHead>
-          <TableHead>类型</TableHead>
-          <TableHead>角色</TableHead>
+          <TableHead>动作</TableHead>
+          <TableHead>操作者</TableHead>
           <TableHead>内容</TableHead>
         </TableRow>
       </TableHeader>
@@ -29,8 +29,8 @@ export function LogTable({ logs }: LogTableProps) {
         {logs.map((log) => (
           <TableRow key={log.id}>
             <TableCell>{dateTimeLabel(log.createdAt)}</TableCell>
-            <TableCell>{log.type}</TableCell>
-            <TableCell>{log.actorRole}</TableCell>
+            <TableCell>{operationTypeLabel(log.type)}</TableCell>
+            <TableCell>{roleLabel(log.actorRole)}</TableCell>
             <TableCell>{log.message}</TableCell>
           </TableRow>
         ))}

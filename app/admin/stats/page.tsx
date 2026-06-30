@@ -56,7 +56,7 @@ export default async function AdminStatsPage({ searchParams }: AdminStatsPagePro
     <AdminShell active="stats" userName={user.name}>
       <Card>
         <CardHeader>
-          <CardTitle>课程维度统计</CardTitle>
+          <CardTitle>课程名单统计</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -65,11 +65,11 @@ export default async function AdminStatsPage({ searchParams }: AdminStatsPagePro
                 <TableHead>课程</TableHead>
                 <TableHead>类别</TableHead>
                 <TableHead>状态</TableHead>
-                <TableHead>容量</TableHead>
-                <TableHead>有效</TableHead>
+                <TableHead>名额</TableHead>
+                <TableHead>已选</TableHead>
                 <TableHead>候补</TableHead>
                 <TableHead>退课</TableHead>
-                <TableHead>移除</TableHead>
+                <TableHead>停开移除</TableHead>
                 <TableHead>操作</TableHead>
               </TableRow>
             </TableHeader>
@@ -165,11 +165,14 @@ function AdminOfferingSheet({
           </SheetHeader>
           <SheetBody>
             <div className="grid gap-3 sm:grid-cols-5">
-              <MetricBox label="容量" value={`${offering.enrolledCount}/${offering.capacity}`} />
-              <MetricBox label="有效" value={`${offering.active}`} />
+              <MetricBox
+                label="已选/名额"
+                value={`${offering.enrolledCount}/${offering.capacity}`}
+              />
+              <MetricBox label="已选" value={`${offering.active}`} />
               <MetricBox label="候补" value={`${offering.waitlisted}`} />
               <MetricBox label="退课" value={`${offering.dropped}`} />
-              <MetricBox label="移除" value={`${offering.removed}`} />
+              <MetricBox label="停开移除" value={`${offering.removed}`} />
             </div>
             <Progress value={offering.rate} />
             <DetailGrid
@@ -208,7 +211,7 @@ function RegistrationTable({
 }) {
   return (
     <div>
-      <div className="mb-2 text-sm font-medium text-zinc-950">名单</div>
+      <div className="mb-2 text-sm font-medium text-zinc-950">学生名单</div>
       {registrations.length ? (
         <Table>
           <TableHeader>
@@ -217,9 +220,9 @@ function RegistrationTable({
               <TableHead>姓名</TableHead>
               <TableHead>专业</TableHead>
               <TableHead>年级</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>顺位</TableHead>
-              <TableHead>登记时间</TableHead>
+              <TableHead>名单状态</TableHead>
+              <TableHead>候补排队</TableHead>
+              <TableHead>加入时间</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

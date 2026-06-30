@@ -144,7 +144,7 @@ function CourseTable({ courses, tab }: { courses: CourseListItem[]; tab: string 
           <TableHead>课程</TableHead>
           <TableHead>状态</TableHead>
           <TableHead>时间</TableHead>
-          <TableHead>容量</TableHead>
+          <TableHead>名额</TableHead>
           <TableHead className="text-right">操作</TableHead>
         </TableRow>
       </TableHeader>
@@ -202,7 +202,7 @@ function ScheduleGrid({ registrations }: { registrations: ScheduleRegistration[]
 
   return (
     <div>
-      <div className="mb-3 text-sm font-medium text-zinc-950">节次</div>
+      <div className="mb-3 text-sm font-medium text-zinc-950">周课表</div>
       <Table>
         <TableHeader>
           <TableRow>
@@ -402,7 +402,7 @@ function CourseSheet({
                 ["班号", `${course.classNo}班`],
                 ["教师", course.teacherName],
                 ["学分", `${course.credits}`],
-                ["容量", `${course.enrolledCount}/${course.capacity}`],
+                ["已选/名额", `${course.enrolledCount}/${course.capacity}`],
               ]}
             />
             <div>
@@ -426,15 +426,17 @@ function CourseSheet({
 }
 
 function availabilityLabel(course: CourseListItem) {
-  if (course.unavailableReasons.length) return "受限";
+  if (course.selected) return "已在课表";
+  if (course.waitlisted) return "候补中";
+  if (course.unavailableReasons.length) return "不能选";
   if (course.enrolledCount >= course.capacity) return "可候补";
-  return "可选";
+  return "可以选";
 }
 
 function RuleCheckTable({ checks }: { checks: CourseListItem["ruleChecks"] }) {
   return (
     <div>
-      <div className="mb-2 text-sm font-medium text-zinc-950">规则</div>
+      <div className="mb-2 text-sm font-medium text-zinc-950">选课检查</div>
       <Table>
         <TableBody>
           {checks.map((check) => (
@@ -442,7 +444,7 @@ function RuleCheckTable({ checks }: { checks: CourseListItem["ruleChecks"] }) {
               <TableCell className="w-24 text-xs text-zinc-500">{check.label}</TableCell>
               <TableCell>
                 <Badge variant={ruleCheckVariant(check.status)}>
-                  {ruleCheckStatusLabel(check.status)}
+                  {ruleCheckStatusLabel(check)}
                 </Badge>
               </TableCell>
               <TableCell className="text-right text-xs text-zinc-500">
@@ -462,10 +464,13 @@ function ruleCheckVariant(status: CourseListItem["ruleChecks"][number]["status"]
   return "secondary";
 }
 
-function ruleCheckStatusLabel(status: CourseListItem["ruleChecks"][number]["status"]) {
-  if (status === "pass") return "通过";
-  if (status === "block") return "受限";
-  return "提示";
+function ruleCheckStatusLabel(check: CourseListItem["ruleChecks"][number]) {
+  if (check.detail.includes("已在课表")) return "已选";
+  if (check.detail.includes("候补中")) return "候补";
+  if (check.detail.includes("已满")) return "已满";
+  if (check.status === "pass") return "可以";
+  if (check.status === "block") return "不能";
+  return "注意";
 }
 
 function DetailGrid({ items }: { items: [string, string][] }) {

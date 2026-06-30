@@ -51,7 +51,7 @@ export function CourseAction({ course }: { course: CourseListItem }) {
   const waitlistAction = isFull(course) && !disabled && !course.selected && !course.waitlisted;
   const action = waitlistAction ? joinWaitlistAction : selectCourseAction;
   const label = course.selected
-    ? "已入课表"
+    ? "已在课表"
     : course.waitlisted
     ? "候补中"
     : isFull(course) && !disabled
@@ -123,8 +123,8 @@ export function getTooltipContent(course: CourseListItem) {
 function getBlockLabels(course: CourseListItem) {
   const labels: string[] = course.unavailableReasons.map(reasonToLabel);
 
-  if (course.selected && !labels.includes("已入课表")) {
-    labels.unshift("已入课表");
+  if (course.selected && !labels.includes("已在课表")) {
+    labels.unshift("已在课表");
   }
 
   if (course.waitlisted && !labels.includes("候补中")) {
@@ -136,15 +136,15 @@ function getBlockLabels(course: CourseListItem) {
 
 function reasonToLabel(reason: string) {
   if (reason.includes("必修")) return "必修";
-  if (reason.includes("已选择")) return "已入课表";
+  if (reason.includes("已选择")) return "已在课表";
   if (reason.includes("候补")) return "候补中";
   if (reason.includes("开放期")) return "未开放";
-  if (reason.includes("冻结")) return "冻结";
+  if (reason.includes("冻结")) return "名单冻结";
   if (reason.includes("停开")) return "停开";
-  if (reason.includes("容量")) return "满员";
-  if (reason.includes("专业")) return "限选";
+  if (reason.includes("容量")) return "名额满";
+  if (reason.includes("专业")) return "不适合";
   if (reason.includes("冲突")) return "冲突";
-  return "不可选";
+  return "不能选";
 }
 
 function isFull(course: CourseListItem) {

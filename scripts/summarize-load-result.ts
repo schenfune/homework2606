@@ -18,6 +18,7 @@ type K6Summary = {
 type LoadTarget = {
   offeringId?: string;
   courseNo?: string;
+  classNo?: string;
 };
 
 type LoadVerificationReport = {
@@ -73,21 +74,8 @@ async function main() {
   const target = await readLoadTarget();
   const offeringId = process.env.LOAD_OFFERING_ID || target?.offeringId;
   const courseNo = process.env.LOAD_COURSE_NO || target?.courseNo || "LT101";
-  const offering = await prisma.courseOffering.findFirstOrThrow({
-    where: offeringId
-      ? {
-          id: offeringId,
-        }
-      : {
-          course: {
-            courseNo,
-          },
-        },
-    include: {
-      course: true,
-      term: true,
-    },
-  });
+  const classNo = process.env.LOAD_CLASS_NO || target?.classNo || "LT";
+  const offering = await resolveLoadOffering({ offeringId, courseNo, classNo });
   const grouped = await prisma.courseRegistration.groupBy({
     by: ["status"],
     where: {
@@ -189,6 +177,57 @@ async function readLoadTarget(): Promise<LoadTarget | null> {
   }
 
   return JSON.parse(await readFile(targetPath, "utf8")) as LoadTarget;
+}
+
+async function resolveLoadOffering({
+  offeringId,
+  courseNo,
+  classNo,
+}: {
+  offeringId?: string;
+  courseNo: string;
+  classNo: string;
+}) {
+  const include = {
+    course: true,
+    term: true,
+  } as const;
+
+  if (offeringId) {
+    const offering = await prisma.courseOffering.findUnique({
+      where: { id: offeringId },
+      include,
+    });
+
+    if (offering) {
+      return offering;
+    }
+
+    console.warn(
+      `目标文件中的开课班ID已失效，将按课程号和班号重新查找：${courseNo} ${classNo}`,
+    );
+  }
+
+  const offering = await prisma.courseOffering.findFirst({
+    where: {
+      classNo,
+      course: {
+        courseNo,
+      },
+      term: {
+        isCurrent: true,
+      },
+    },
+    include,
+  });
+
+  if (!offering) {
+    throw new Error(
+      `未找到压测课程 ${courseNo} ${classNo}班。请先运行 pnpm exec tsx scripts/seed-load-test.ts 重新准备压测数据。`,
+    );
+  }
+
+  return offering;
 }
 
 function k6Metric(summary: K6Summary | null, name: string, key: string) {

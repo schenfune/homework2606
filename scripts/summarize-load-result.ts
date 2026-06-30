@@ -2,6 +2,8 @@ import { RegistrationStatus } from "@prisma/client";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { prisma } from "../lib/db/prisma";
+import { redis } from "../lib/db/redis";
+import { getRedisGateSnapshot } from "../lib/services/enrollment-reservations";
 
 const artifactDir = "artifacts";
 const targetPath = `${artifactDir}/load-test-target.json`;
@@ -35,6 +37,10 @@ type LoadVerificationReport = {
     dropped: number;
     removed: number;
   };
+  redis: {
+    activeReserved: number;
+    waitlistSequence: number;
+  };
   consistency: {
     activeNotGreaterThanCapacity: boolean;
     enrolledCounterMatchesActive: boolean;
@@ -48,6 +54,7 @@ type LoadVerificationReport = {
     successResponses: number;
     unknownSuccessResponses: number;
     businessRejects: number;
+    courseFullResponses: number;
     busyRejects: number;
     duplicateRejects: number;
     conflictRejects: number;
@@ -100,6 +107,9 @@ async function main() {
 
   const activeCount = counts.ACTIVE;
   const waitlistedCount = counts.WAITLISTED;
+  const redisGate = await getRedisGateSnapshot(offering.id);
+  const redisActive = Number(redisGate.active ?? 0);
+  const redisWaitlistSeq = Number(redisGate.waitlistSeq ?? 0);
   const capacityConsistent = activeCount <= offering.capacity;
   const counterConsistent = activeCount === offering.enrolledCount;
   const consistent = capacityConsistent && counterConsistent;
@@ -121,6 +131,10 @@ async function main() {
       dropped: counts.DROPPED,
       removed: counts.REMOVED,
     },
+    redis: {
+      activeReserved: redisActive,
+      waitlistSequence: redisWaitlistSeq,
+    },
     consistency: {
       activeNotGreaterThanCapacity: capacityConsistent,
       enrolledCounterMatchesActive: counterConsistent,
@@ -134,6 +148,7 @@ async function main() {
       successResponses: k6Metric(k6Summary, "success_responses", "count"),
       unknownSuccessResponses: k6Metric(k6Summary, "unknown_success_responses", "count"),
       businessRejects: k6Metric(k6Summary, "business_rejects", "count"),
+      courseFullResponses: k6Metric(k6Summary, "course_full_responses", "count"),
       busyRejects: k6Metric(k6Summary, "busy_rejects", "count"),
       duplicateRejects: k6Metric(k6Summary, "duplicate_rejects", "count"),
       conflictRejects: k6Metric(k6Summary, "conflict_rejects", "count"),
@@ -154,6 +169,8 @@ async function main() {
   console.log(`容量: ${offering.capacity}`);
   console.log(`有效登记: ${activeCount}`);
   console.log(`候补登记: ${waitlistedCount}`);
+  console.log(`Redis正式预占: ${redisActive}`);
+  console.log(`Redis候补序号: ${redisWaitlistSeq}`);
   console.log(`Markdown摘要: ${verificationMarkdownPath}`);
   console.log(`JSON摘要: ${verificationJsonPath}`);
 }
@@ -204,6 +221,7 @@ function renderMarkdown(report: LoadVerificationReport) {
 | 候补入队响应 | ${formatNumber(report.k6.waitlistedResponses)} |
 | 未知成功响应 | ${formatNumber(report.k6.unknownSuccessResponses)} |
 | 业务拒绝 | ${formatNumber(report.k6.businessRejects)} |
+| 容量满响应 | ${formatNumber(report.k6.courseFullResponses)} |
 | 忙碌拒绝 | ${formatNumber(report.k6.busyRejects)} |
 | 重复提交拒绝 | ${formatNumber(report.k6.duplicateRejects)} |
 | 时间冲突拒绝 | ${formatNumber(report.k6.conflictRejects)} |
@@ -225,6 +243,13 @@ function renderMarkdown(report: LoadVerificationReport) {
 | 有效登记不超过容量 | ${passText(report.consistency.activeNotGreaterThanCapacity)} |
 | 已选计数匹配有效登记 | ${passText(report.consistency.enrolledCounterMatchesActive)} |
 | 总体结论 | ${passText(report.consistency.passed)} |
+
+## Redis预占状态
+
+| 指标 | 结果 |
+| --- | --- |
+| 正式预占 | ${report.redis.activeReserved} |
+| 候补序号 | ${report.redis.waitlistSequence} |
 `;
 }
 
@@ -243,4 +268,8 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+
+    if (redis.isOpen) {
+      await redis.quit();
+    }
   });

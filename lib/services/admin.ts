@@ -11,6 +11,7 @@ import {
   safeInvalidateAllEnrollmentCaches,
   setJsonCache,
 } from "@/lib/services/cache";
+import { clearOfferingReservationState } from "@/lib/services/enrollment-reservations";
 
 export async function getAdminDashboard() {
   const cached = await getJsonCache<Awaited<ReturnType<typeof loadAdminDashboard>>>(
@@ -202,6 +203,7 @@ export async function closeOffering(adminId: string, offeringId: string) {
     });
   });
 
+  await clearOfferingReservationState(offeringId);
   await safeInvalidateAllEnrollmentCaches();
 }
 
@@ -261,6 +263,7 @@ export async function cancelOffering(adminId: string, offeringId: string, reason
     });
   });
 
+  await clearOfferingReservationState(offeringId);
   await safeInvalidateAllEnrollmentCaches();
 }
 

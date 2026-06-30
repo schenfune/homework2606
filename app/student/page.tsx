@@ -340,10 +340,7 @@ function ScheduleTable({
                 <div className="flex flex-wrap gap-1.5">
                   <Badge>{categoryLabel(course.category)}</Badge>
                   {registration.status === RegistrationStatus.WAITLISTED ? (
-                    <Badge variant="warning">
-                      {registrationStatusLabel(registration.status)}
-                      {registration.waitlistPosition ? `第${registration.waitlistPosition}位` : ""}
-                    </Badge>
+                    <Badge variant="warning">{registrationStatusLabel(registration.status)}</Badge>
                   ) : null}
                 </div>
               </TableCell>

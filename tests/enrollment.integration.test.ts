@@ -1,7 +1,13 @@
 import { CourseCategory, RegistrationStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db/prisma";
-import { dropCourse, getStudentDashboard, selectCourse } from "@/lib/services/enrollment";
+import {
+  dropCourse,
+  getStudentDashboard,
+  joinWaitlist,
+  selectCourse,
+} from "@/lib/services/enrollment";
+import { processEnrollmentWritebackBatch } from "@/lib/services/enrollment-writeback";
 import { seedDemoData } from "@/prisma/seed";
 
 describe("enrollment service", () => {
@@ -12,7 +18,8 @@ describe("enrollment service", () => {
   it("selects an eligible major elective", async () => {
     const { studentId, offeringId } = await fixture("20240001", "SE301");
 
-    await selectCourse(studentId, offeringId);
+    const reserved = await selectCourse(studentId, offeringId);
+    await drainWriteback();
 
     const registration = await prisma.courseRegistration.findUnique({
       where: {
@@ -26,6 +33,7 @@ describe("enrollment service", () => {
       where: { id: offeringId },
     });
 
+    expect(reserved.status).toBe(RegistrationStatus.ACTIVE);
     expect(registration?.status).toBe(RegistrationStatus.ACTIVE);
     expect(offering.enrolledCount).toBe(1);
   });
@@ -35,6 +43,7 @@ describe("enrollment service", () => {
 
     await selectCourse(studentId, offeringId);
     await expect(selectCourse(studentId, offeringId)).rejects.toThrow();
+    await drainWriteback();
 
     const offering = await prisma.courseOffering.findUniqueOrThrow({
       where: { id: offeringId },
@@ -89,6 +98,7 @@ describe("enrollment service", () => {
     const results = await Promise.allSettled(
       students.map((student) => selectCourse(student.id, offering.id)),
     );
+    await drainWriteback();
     const activeCount = await prisma.courseRegistration.count({
       where: {
         offeringId: offering.id,
@@ -105,9 +115,10 @@ describe("enrollment service", () => {
       where: { id: offering.id },
     });
 
-    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect(activeCount).toBe(1);
-    expect(waitlistedCount).toBe(1);
+    expect(waitlistedCount).toBe(0);
     expect(updated.enrolledCount).toBe(1);
   });
 
@@ -151,7 +162,8 @@ describe("enrollment service", () => {
     const { studentId: secondStudentId } = await fixture("20240002", "SE304");
 
     await selectCourse(firstStudentId, offeringId);
-    const waitlisted = await selectCourse(secondStudentId, offeringId);
+    const waitlisted = await joinWaitlist(secondStudentId, offeringId);
+    await drainWriteback();
 
     const offering = await prisma.courseOffering.findUniqueOrThrow({
       where: { id: offeringId },
@@ -168,8 +180,8 @@ describe("enrollment service", () => {
     const third = await fixture("20230003", "GE204");
 
     await selectCourse(first.studentId, first.offeringId);
-    const secondWaitlist = await selectCourse(second.studentId, second.offeringId);
-    const thirdWaitlist = await selectCourse(third.studentId, third.offeringId);
+    const secondWaitlist = await joinWaitlist(second.studentId, second.offeringId);
+    const thirdWaitlist = await joinWaitlist(third.studentId, third.offeringId);
 
     expect(secondWaitlist.waitlistPosition).toBe(1);
     expect(thirdWaitlist.waitlistPosition).toBe(2);
@@ -181,7 +193,7 @@ describe("enrollment service", () => {
     const conflicting = await fixture("20240001", "GE201");
 
     await selectCourse(active.studentId, active.offeringId);
-    await selectCourse(waitlisted.studentId, waitlisted.offeringId);
+    await joinWaitlist(waitlisted.studentId, waitlisted.offeringId);
 
     await expect(selectCourse(conflicting.studentId, conflicting.offeringId)).rejects.toThrow(
       "上课时间冲突",
@@ -192,9 +204,18 @@ describe("enrollment service", () => {
     const first = await fixture("20240001", "SE304");
     const second = await fixture("20240002", "SE304");
 
-    const active = await selectCourse(first.studentId, first.offeringId);
-    await selectCourse(second.studentId, second.offeringId);
-    await dropCourse(first.studentId, active.id);
+    await selectCourse(first.studentId, first.offeringId);
+    await joinWaitlist(second.studentId, second.offeringId);
+    await drainWriteback();
+    const activeRegistration = await prisma.courseRegistration.findUniqueOrThrow({
+      where: {
+        studentId_offeringId: {
+          studentId: first.studentId,
+          offeringId: first.offeringId,
+        },
+      },
+    });
+    await dropCourse(first.studentId, activeRegistration.id);
 
     const promoted = await prisma.courseRegistration.findUniqueOrThrow({
       where: {
@@ -218,11 +239,20 @@ describe("enrollment service", () => {
     const second = await fixture("20240002", "SE304");
 
     await selectCourse(first.studentId, first.offeringId);
-    const waitlisted = await selectCourse(second.studentId, second.offeringId);
-    await dropCourse(second.studentId, waitlisted.id);
+    await joinWaitlist(second.studentId, second.offeringId);
+    await drainWriteback();
+    const waitlistedRegistration = await prisma.courseRegistration.findUniqueOrThrow({
+      where: {
+        studentId_offeringId: {
+          studentId: second.studentId,
+          offeringId: second.offeringId,
+        },
+      },
+    });
+    await dropCourse(second.studentId, waitlistedRegistration.id);
 
     const dropped = await prisma.courseRegistration.findUniqueOrThrow({
-      where: { id: waitlisted.id },
+      where: { id: waitlistedRegistration.id },
     });
     const offering = await prisma.courseOffering.findUniqueOrThrow({
       where: { id: first.offeringId },
@@ -233,6 +263,20 @@ describe("enrollment service", () => {
     expect(offering.enrolledCount).toBe(1);
   });
 });
+
+async function drainWriteback() {
+  for (let index = 0; index < 5; index += 1) {
+    const processed = await processEnrollmentWritebackBatch({
+      consumer: `test-${process.pid}-${index}`,
+      count: 100,
+      blockMs: 1,
+    });
+
+    if (processed === 0) {
+      return;
+    }
+  }
+}
 
 async function fixture(studentNo: string, courseNo: string) {
   const student = await prisma.studentProfile.findUniqueOrThrow({

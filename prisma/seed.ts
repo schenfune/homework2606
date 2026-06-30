@@ -10,10 +10,13 @@ import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db/prisma";
 import { redis } from "../lib/db/redis";
 import { safeInvalidateAllEnrollmentCaches } from "../lib/services/cache";
+import { clearEnrollmentReservationState } from "../lib/services/enrollment-reservations";
 
 const demoPassword = "12345678";
 
 export async function seedDemoData() {
+  await clearEnrollmentReservationState();
+
   await prisma.$transaction(async (tx) => {
     await tx.operationLog.deleteMany();
     await tx.courseRegistration.deleteMany();

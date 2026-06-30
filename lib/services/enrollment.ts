@@ -14,6 +14,16 @@ import {
   safeInvalidateEnrollmentCaches,
   setJsonCache,
 } from "@/lib/services/cache";
+import {
+  decrementActiveGate,
+  getRedisGateSnapshot,
+  getStudentReservations,
+  releaseReservation,
+  reservationKey,
+  reserveActiveSeat,
+  reserveWaitlistSeat,
+  type StudentReservation,
+} from "@/lib/services/enrollment-reservations";
 import { hasMeetingConflict } from "@/lib/services/schedule";
 
 export type RuleCheckCode =
@@ -37,6 +47,17 @@ const SCHEDULE_OCCUPYING_STATUSES = [
   RegistrationStatus.ACTIVE,
   RegistrationStatus.WAITLISTED,
 ];
+const RESERVATION_REGISTRATION_PREFIX = "enrollment:reservation:";
+
+export class EnrollmentError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "EnrollmentError";
+  }
+}
 
 export async function getStudentDashboard(profileId: string) {
   const cached = await getJsonCache<Awaited<ReturnType<typeof loadStudentDashboard>>>(
@@ -102,8 +123,55 @@ async function loadStudentDashboard(profileId: string) {
       registeredAt: "asc",
     },
   });
+  const redisReservations = await getStudentReservations(profileId);
+  const redisReservationsByOffering = new Map(
+    redisReservations.map((reservation) => [reservation.offeringId, reservation]),
+  );
+  const gateSnapshots = await Promise.all(
+    term.offerings.map((offering) => getRedisGateSnapshot(offering.id)),
+  );
+  const gateActiveByOffering = new Map(
+    term.offerings.map((offering, index) => {
+      const active = gateSnapshots[index]?.active;
+      return [
+        offering.id,
+        active !== undefined && active !== "" ? Number(active) : offering.enrolledCount,
+      ] as const;
+    }),
+  );
+  const syntheticRegistrations = redisReservations
+    .filter(
+      (reservation) =>
+        !registrations.some(
+          (registration) =>
+            registration.offeringId === reservation.offeringId &&
+            isScheduleOccupyingStatus(registration.status),
+        ),
+    )
+    .flatMap((reservation) => {
+      const offering = term.offerings.find((item) => item.id === reservation.offeringId);
 
-  const occupiedCourses = registrations
+      if (!offering) {
+        return [];
+      }
+
+      return [
+        {
+          id: reservation.key,
+          status: reservationStatusToRegistrationStatus(reservation),
+          registeredAt: new Date(),
+          waitlistedAt: reservation.kind === "WAITLIST" ? new Date() : null,
+          waitlistPosition: null,
+          updatedAt: new Date(),
+          studentId: profileId,
+          offeringId: reservation.offeringId,
+          offering,
+        },
+      ];
+    });
+  const visibleRegistrations = [...registrations, ...syntheticRegistrations];
+
+  const occupiedCourses = visibleRegistrations
     .filter((registration) => registration.offering.status !== OfferingStatus.CANCELED)
     .map((registration) => ({
       offeringId: registration.offeringId,
@@ -113,14 +181,26 @@ async function loadStudentDashboard(profileId: string) {
 
   const courses = term.offerings.map((offering) => {
     const ownRegistration = offering.registrations[0];
+    const ownReservation = redisReservationsByOffering.get(offering.id);
+    const ownStatus =
+      ownRegistration && isScheduleOccupyingStatus(ownRegistration.status)
+        ? ownRegistration.status
+        : ownReservation
+        ? reservationStatusToRegistrationStatus(ownReservation)
+        : undefined;
+    const enrolledCount = gateActiveByOffering.get(offering.id) ?? offering.enrolledCount;
+    const offeringForRules = {
+      ...offering,
+      enrolledCount,
+    };
     const ruleChecks = buildCourseRuleChecks({
-      offering,
+      offering: offeringForRules,
       student,
       term,
       activeCourses: occupiedCourses.filter((course) => course.offeringId !== offering.id),
-      ownRegistrationStatus: ownRegistration?.status,
+      ownRegistrationStatus: ownStatus,
     });
-    const reasons = getUnavailableReasons(ruleChecks, ownRegistration?.status);
+    const reasons = getUnavailableReasons(ruleChecks, ownStatus);
 
     return {
       id: offering.id,
@@ -131,18 +211,18 @@ async function loadStudentDashboard(profileId: string) {
       credits: offering.course.credits,
       teacherName: offering.teacherName,
       capacity: offering.capacity,
-      enrolledCount: offering.enrolledCount,
+      enrolledCount,
       status: offering.status,
       meetingTimes: offering.meetingTimes,
       ruleChecks,
       unavailableReasons: reasons,
-      selected: ownRegistration?.status === RegistrationStatus.ACTIVE,
-      waitlisted: ownRegistration?.status === RegistrationStatus.WAITLISTED,
-      waitlistPosition: ownRegistration?.waitlistPosition,
+      selected: ownStatus === RegistrationStatus.ACTIVE,
+      waitlisted: ownStatus === RegistrationStatus.WAITLISTED,
+      waitlistPosition: ownRegistration?.waitlistPosition ?? null,
     };
   });
 
-  const activeRegistrations = registrations.filter(
+  const activeRegistrations = visibleRegistrations.filter(
     (registration) => registration.status === RegistrationStatus.ACTIVE,
   );
 
@@ -150,7 +230,7 @@ async function loadStudentDashboard(profileId: string) {
     student,
     term,
     courses,
-    registrations,
+    registrations: visibleRegistrations,
     totalCredits: activeRegistrations.reduce(
       (sum, registration) => sum + registration.offering.course.credits,
       0,
@@ -159,172 +239,199 @@ async function loadStudentDashboard(profileId: string) {
 }
 
 export async function selectCourse(profileId: string, offeringId: string) {
-  const registration = await runEnrollmentTransaction(async (tx) => {
-    await acquireStudentSubmissionLock(tx, profileId, "选课");
-    await acquireOfferingLock(tx, offeringId);
+  const { offering } = await validateEnrollmentIntent({
+    profileId,
+    offeringId,
+  });
+  const result = await reserveActiveSeat({
+    profileId,
+    offeringId,
+    capacity: offering.capacity,
+    enrolledCount: offering.enrolledCount,
+  });
 
-    const student = await tx.studentProfile.findUnique({
+  if (result.code === "COURSE_FULL") {
+    await safeInvalidateEnrollmentCaches(profileId);
+    throw new EnrollmentError("COURSE_FULL", "课程容量已满");
+  }
+
+  if (result.code === "DUPLICATE") {
+    throw new Error(result.status?.includes("WAITLIST") ? "已加入候补" : "已选择该课程");
+  }
+
+  await safeInvalidateEnrollmentCaches(profileId);
+  return {
+    id: reservationKey(profileId, offeringId),
+    studentId: profileId,
+    offeringId,
+    status: RegistrationStatus.ACTIVE,
+    waitlistPosition: null,
+  };
+}
+
+export async function joinWaitlist(profileId: string, offeringId: string) {
+  const { offering } = await validateEnrollmentIntent({
+    profileId,
+    offeringId,
+  });
+  const waitlistMax = await getWaitlistMax(offeringId);
+  const result = await reserveWaitlistSeat({
+    profileId,
+    offeringId,
+    capacity: offering.capacity,
+    enrolledCount: offering.enrolledCount,
+    waitlistMax,
+  });
+
+  if (result.code === "SEAT_AVAILABLE") {
+    await safeInvalidateEnrollmentCaches(profileId);
+    throw new EnrollmentError("SEAT_AVAILABLE", "课程仍有余量");
+  }
+
+  if (result.code === "DUPLICATE") {
+    throw new Error(result.status?.includes("WAITLIST") ? "已加入候补" : "已选择该课程");
+  }
+
+  await safeInvalidateEnrollmentCaches(profileId);
+  return {
+    id: reservationKey(profileId, offeringId),
+    studentId: profileId,
+    offeringId,
+    status: RegistrationStatus.WAITLISTED,
+    waitlistPosition: result.waitlistPosition ?? null,
+  };
+}
+
+async function validateEnrollmentIntent({
+  profileId,
+  offeringId,
+}: {
+  profileId: string;
+  offeringId: string;
+}) {
+  const [student, term, offering, existing, redisReservations] = await Promise.all([
+    prisma.studentProfile.findUnique({
       where: { id: profileId },
       include: { department: true, major: true },
-    });
-    const term = await tx.term.findFirst({ where: { isCurrent: true } });
-    const offering = await tx.courseOffering.findUnique({
+    }),
+    prisma.term.findFirst({ where: { isCurrent: true } }),
+    prisma.courseOffering.findUnique({
       where: { id: offeringId },
       include: {
         course: true,
         meetingTimes: true,
         eligibilityRules: true,
       },
-    });
-
-    if (!student || !term || !offering) {
-      throw new Error("选课数据不存在");
-    }
-
-    const existing = await tx.courseRegistration.findUnique({
+    }),
+    prisma.courseRegistration.findUnique({
       where: {
         studentId_offeringId: {
           studentId: profileId,
           offeringId,
         },
       },
-    });
+    }),
+    getStudentReservations(profileId),
+  ]);
 
-    const occupiedRegistrations = await tx.courseRegistration.findMany({
-      where: {
-        studentId: profileId,
+  if (!student || !term || !offering) {
+    throw new Error("选课数据不存在");
+  }
+
+  const occupiedRegistrations = await prisma.courseRegistration.findMany({
+    where: {
+      studentId: profileId,
+      status: {
+        in: SCHEDULE_OCCUPYING_STATUSES,
+      },
+      offering: {
         status: {
-          in: SCHEDULE_OCCUPYING_STATUSES,
-        },
-        offering: {
-          status: {
-            not: OfferingStatus.CANCELED,
-          },
+          not: OfferingStatus.CANCELED,
         },
       },
-      include: {
-        offering: {
+    },
+    include: {
+      offering: {
+        include: {
+          course: true,
+          meetingTimes: true,
+        },
+      },
+    },
+  });
+  const redisOfferingIds = redisReservations
+    .filter((reservation) => reservation.offeringId !== offeringId)
+    .map((reservation) => reservation.offeringId);
+  const reservedOfferings =
+    redisOfferingIds.length > 0
+      ? await prisma.courseOffering.findMany({
+          where: {
+            id: {
+              in: redisOfferingIds,
+            },
+            status: {
+              not: OfferingStatus.CANCELED,
+            },
+          },
           include: {
             course: true,
             meetingTimes: true,
           },
-        },
-      },
-    });
-
-    const occupiedCourses = occupiedRegistrations
+        })
+      : [];
+  const occupiedCourses = [
+    ...occupiedRegistrations
       .filter((registration) => registration.offeringId !== offeringId)
       .map((registration) => ({
         offeringId: registration.offeringId,
         courseName: registration.offering.course.name,
         meetingTimes: registration.offering.meetingTimes,
-      }));
-
-    const ruleChecks = buildCourseRuleChecks({
-      offering,
-      student,
-      term,
-      activeCourses: occupiedCourses,
-      ownRegistrationStatus: existing?.status,
-    });
-    const reasons = getUnavailableReasons(ruleChecks, existing?.status);
-
-    if (reasons.length > 0) {
-      throw new Error(reasons[0]);
-    }
-
-    const updated = await tx.courseOffering.updateMany({
-      where: {
-        id: offeringId,
-        status: OfferingStatus.PUBLISHED,
-        enrolledCount: {
-          lt: offering.capacity,
-        },
-      },
-      data: {
-        enrolledCount: {
-          increment: 1,
-        },
-      },
-    });
-
-    if (updated.count === 1) {
-      const registration = existing
-        ? await tx.courseRegistration.update({
-            where: { id: existing.id },
-            data: {
-              status: RegistrationStatus.ACTIVE,
-              registeredAt: new Date(),
-              waitlistedAt: null,
-              waitlistPosition: null,
-            },
-          })
-        : await tx.courseRegistration.create({
-            data: {
-              studentId: profileId,
-              offeringId,
-              status: RegistrationStatus.ACTIVE,
-            },
-          });
-
-      await tx.operationLog.create({
-        data: {
-          type: OperationType.COURSE_SELECTED,
-          actorRole: Role.STUDENT,
-          actorId: profileId,
-          targetId: offeringId,
-          message: `${student.name}选择${offering.course.name}`,
-        },
-      });
-
-      return registration;
-    }
-
-    const currentOffering = await tx.courseOffering.findUnique({
-      where: { id: offeringId },
-      select: {
-        capacity: true,
-        enrolledCount: true,
-        status: true,
-      },
-    });
-
-    if (!currentOffering || currentOffering.status !== OfferingStatus.PUBLISHED) {
-      throw new Error("课程名单已冻结");
-    }
-
-    if (currentOffering.enrolledCount < currentOffering.capacity) {
-      throw new Error("选课提交冲突，请重试");
-    }
-
-    const registration = await createOrRestoreWaitlistRegistration({
-      tx,
-      existing,
-      profileId,
-      offeringId,
-    });
-
-    await tx.operationLog.create({
-      data: {
-        type: OperationType.COURSE_WAITLISTED,
-        actorRole: Role.STUDENT,
-        actorId: profileId,
-        targetId: offeringId,
-        message: `${student.name}候补${offering.course.name}`,
-        metadata: {
-          waitlistPosition: registration.waitlistPosition,
-        },
-      },
-    });
-
-    return registration;
+      })),
+    ...reservedOfferings.map((reservedOffering) => ({
+      offeringId: reservedOffering.id,
+      courseName: reservedOffering.course.name,
+      meetingTimes: reservedOffering.meetingTimes,
+    })),
+  ];
+  const ownReservation = redisReservations.find(
+    (reservation) => reservation.offeringId === offeringId,
+  );
+  const ownStatus =
+    existing && isScheduleOccupyingStatus(existing.status)
+      ? existing.status
+      : ownReservation
+      ? reservationStatusToRegistrationStatus(ownReservation)
+      : undefined;
+  const ruleChecks = buildCourseRuleChecks({
+    offering,
+    student,
+    term,
+    activeCourses: occupiedCourses,
+    ownRegistrationStatus: ownStatus,
   });
+  const reasons = getUnavailableReasons(ruleChecks, ownStatus);
 
-  await safeInvalidateEnrollmentCaches(profileId);
-  return registration;
+  if (reasons.length > 0) {
+    throw new Error(reasons[0]);
+  }
+
+  return {
+    student,
+    term,
+    offering,
+    existing,
+  };
 }
 
 export async function dropCourse(profileId: string, registrationId: string) {
+  const reservedOfferingId = reservationIdToOfferingId(profileId, registrationId);
+
+  if (reservedOfferingId) {
+    await releaseReservation(profileId, reservedOfferingId);
+    await safeInvalidateAllEnrollmentCaches();
+    return;
+  }
+
   await runEnrollmentTransaction(async (tx) => {
     await acquireStudentSubmissionLock(tx, profileId, "退课");
 
@@ -382,6 +489,7 @@ export async function dropCourse(profileId: string, registrationId: string) {
         },
       });
 
+      await releaseReservation(profileId, registration.offeringId);
       return;
     }
 
@@ -398,6 +506,11 @@ export async function dropCourse(profileId: string, registrationId: string) {
         },
       },
     });
+    const releaseResult = await releaseReservation(profileId, registration.offeringId);
+
+    if (releaseResult === "MISSING") {
+      await decrementActiveGate(registration.offeringId);
+    }
 
     await tx.operationLog.create({
       data: {
@@ -419,38 +532,40 @@ export async function dropCourse(profileId: string, registrationId: string) {
   await safeInvalidateAllEnrollmentCaches();
 }
 
-async function createOrRestoreWaitlistRegistration({
-  tx,
-  existing,
-  profileId,
-  offeringId,
-}: {
-  tx: Prisma.TransactionClient;
-  existing: { id: string } | null;
-  profileId: string;
-  offeringId: string;
-}) {
-  const position = await nextWaitlistPosition(tx, offeringId);
-  const now = new Date();
+async function getWaitlistMax(offeringId: string) {
+  const aggregate = await prisma.courseRegistration.aggregate({
+    where: {
+      offeringId,
+      status: RegistrationStatus.WAITLISTED,
+    },
+    _max: {
+      waitlistPosition: true,
+    },
+  });
 
-  return existing
-    ? tx.courseRegistration.update({
-        where: { id: existing.id },
-        data: {
-          status: RegistrationStatus.WAITLISTED,
-          waitlistedAt: now,
-          waitlistPosition: position,
-        },
-      })
-    : tx.courseRegistration.create({
-        data: {
-          studentId: profileId,
-          offeringId,
-          status: RegistrationStatus.WAITLISTED,
-          waitlistedAt: now,
-          waitlistPosition: position,
-        },
-      });
+  return aggregate._max.waitlistPosition ?? 0;
+}
+
+function reservationStatusToRegistrationStatus(reservation: StudentReservation) {
+  return reservation.kind === "WAITLIST"
+    ? RegistrationStatus.WAITLISTED
+    : RegistrationStatus.ACTIVE;
+}
+
+function reservationIdToOfferingId(profileId: string, registrationId: string) {
+  if (!registrationId.startsWith(RESERVATION_REGISTRATION_PREFIX)) {
+    return null;
+  }
+
+  const parts = registrationId.split(":");
+  const reservationProfileId = parts[2];
+  const offeringId = parts[3];
+
+  return reservationProfileId === profileId && offeringId ? offeringId : null;
+}
+
+function isScheduleOccupyingStatus(status: RegistrationStatus) {
+  return status === RegistrationStatus.ACTIVE || status === RegistrationStatus.WAITLISTED;
 }
 
 async function promoteFirstWaitlistedRegistration({
@@ -518,20 +633,6 @@ async function promoteFirstWaitlistedRegistration({
       },
     },
   });
-}
-
-async function nextWaitlistPosition(tx: Prisma.TransactionClient, offeringId: string) {
-  const aggregate = await tx.courseRegistration.aggregate({
-    where: {
-      offeringId,
-      status: RegistrationStatus.WAITLISTED,
-    },
-    _max: {
-      waitlistPosition: true,
-    },
-  });
-
-  return (aggregate._max.waitlistPosition ?? 0) + 1;
 }
 
 export function buildCourseRuleChecks({

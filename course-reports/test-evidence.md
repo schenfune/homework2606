@@ -21,7 +21,7 @@
 
 ## 7.2 测试策略
 
-测试按三层组织。第一层是单元测试，验证课表时间区间重叠算法。第二层是服务层集成测试，直接调用选课服务和管理服务，验证事务、状态迁移和数据库一致性。第三层是系统级手动测试和压测脚本，验证页面流程、登录权限、缓存限流和高并发提交。
+测试按三层组织。第一层是单元测试，验证课表时间区间重叠算法。第二层是服务层集成测试，直接调用选课服务、候补服务、写回Worker和管理服务，验证预占、状态迁移和数据库一致性。第三层是系统级手动测试和压测脚本，验证页面流程、登录权限、Redis容量闸门、异步写回和高并发提交。
 
 表7.2列出测试范围和优先级。
 
@@ -48,15 +48,16 @@
 | TC02 | 专业选修成功 | 学生20240001登录，课程SE301开放 | 调用`selectCourse` | 产生`ACTIVE`登记，已选人数加一 | `tests/enrollment.integration.test.ts` |
 | TC03 | 重复选课 | 已存在同一课程登记 | 再次调用`selectCourse` | 系统拒绝，容量不重复增加 | `tests/enrollment.integration.test.ts` |
 | TC04 | 必修课冲突 | 学生已有周一第1到2节必修课 | 选择SE302 | 系统返回时间冲突 | `tests/enrollment.integration.test.ts` |
-| TC05 | 并发抢最后名额 | SE301容量改为1，两名学生同时提交 | 并发调用`selectCourse` | 一人有效，一人候补，容量仍为1 | `tests/enrollment.integration.test.ts` |
+| TC05 | 并发抢最后名额 | SE301容量改为1，两名学生同时提交 | 并发调用`selectCourse`并执行Worker写回 | 一人有效，一人收到容量满，容量仍为1 | `tests/enrollment.integration.test.ts` |
 | TC06 | 规则诊断 | 学生打开选课页 | 查询课程规则项 | 可选课程无阻断，冲突课程标记时间冲突 | `tests/enrollment.integration.test.ts` |
-| TC07 | 满员候补 | SE304容量为1，已有一名学生选中 | 第二名学生提交 | 产生`WAITLISTED`登记，顺位为1 | `tests/enrollment.integration.test.ts` |
+| TC07 | 满员候补 | SE304容量为1，已有一名学生选中 | 第二名学生显式调用`joinWaitlist`并执行Worker写回 | 产生`WAITLISTED`登记，顺位为1 | `tests/enrollment.integration.test.ts` |
 | TC08 | 候补顺位 | GE204容量为1，三名学生提交 | 第二和第三名学生加入候补 | 顺位依次为1和2 | `tests/enrollment.integration.test.ts` |
 | TC09 | 候补参与冲突 | 学生已候补GE202 | 再选同时间GE201 | 系统拒绝并提示时间冲突 | `tests/enrollment.integration.test.ts` |
 | TC10 | 退课自动递补 | 一名学生有效，一名学生候补 | 有效学生退课 | 候补学生转为`ACTIVE`，容量仍为1 | `tests/enrollment.integration.test.ts` |
 | TC11 | 退出候补 | 学生处于候补状态 | 调用`dropCourse` | 登记改为`DROPPED`，容量不变化 | `tests/enrollment.integration.test.ts` |
 | TC12 | 管理员详情 | 存在退课、移除和日志 | 查询管理端dashboard | 详情含名单和相关日志 | `tests/admin.integration.test.ts` |
 | TC13 | 停开含候补课程 | 课程含有效和候补登记 | 管理员停开课程 | 两类登记统一改为`REMOVED` | `tests/admin.integration.test.ts` |
+| TC14 | Redis预占写回 | 学生提交正式选课或候补 | 处理Redis Stream任务 | Worker幂等写入登记并确认预占 | `tests/enrollment.integration.test.ts` |
 
 ## 7.4 命令验证记录
 
@@ -97,12 +98,14 @@ pnpm build
 | Seed脚本运行后进程不退出 | Redis连接仍保持打开 | Seed结束时断开Prisma和Redis连接 | 手动执行Seed |
 | 并发测试偶发写冲突 | 多事务同时抢最后容量和候补顺位 | 使用Read Committed事务、学生锁和开课班名单锁串行化名单变更 | 并发集成测试、k6压测 |
 | 集成测试互相重置数据库 | 测试文件共享同一个开发库 | 禁用测试文件并行执行 | `vitest run` |
+| 抢课P95偏高 | 同步事务在请求线程中排队写库 | 用Redis Lua脚本完成入口预占，Worker异步写回PostgreSQL | k6多学生抢课报告 |
+| Redis Stream解析不兼容 | Redis客户端返回对象形态而非RESP数组形态 | 写回Worker兼容对象和数组两种解析结果 | Worker集成测试 |
 
 ## 7.6 压测说明
 
-`tests/load/enrollment.js`用于选课HTTP接口压测。压测前先运行`pnpm exec tsx scripts/seed-load-test.ts`生成专用压测课程和压测学生。主压测采用多学生同时抢课模式，目标在于证明开选瞬间的事务一致性、候补入队和容量不超卖。单账号重复提交只作为限流专项，用来证明Redis会拦截异常高频请求。
+`tests/load/enrollment.js`用于选课HTTP接口压测。压测前先运行`pnpm exec tsx scripts/seed-load-test.ts`生成专用压测课程和压测学生。主压测采用多学生同时抢课模式，目标在于证明开选瞬间Redis预占能够快速判定正式名额，容量外学生收到结构化`COURSE_FULL`，数据库最终登记不超卖。候补压测单独运行`MODE=waitlist`，用于证明满员后显式候补可以稳定入队。单账号重复提交只作为限流专项，用来证明Redis会拦截异常高频请求。
 
-建议在报告中记录压测配置、并发学生数、课程容量、正式入选人数、候补人数、P95延迟、业务拒绝细分、服务端错误数和数据库最终登记数量。若正式入选人数等于课程容量，候补人数等于剩余提交学生数，且服务错误为0，可以说明系统在并发抢课下保持了业务一致性。若出现业务拒绝，应结合k6的忙碌、重复、冲突、规则和其他分类判断是压测环境瓶颈还是业务规则命中。
+建议在报告中记录压测配置、并发学生数、课程容量、正式预占响应数、容量满响应数、候补入队响应数、P95延迟、服务端错误数、Redis闸门状态和数据库最终登记数量。抢课主报告的理想结果是正式入选响应等于课程容量、容量满响应等于剩余提交学生数、服务错误为0；候补报告的理想结果是候补入队响应等于候补提交人数。压测后运行Worker并执行汇总脚本，若有效登记数不超过课程容量、`enrolledCount`匹配有效登记、Redis正式预占数与最终登记一致，可以说明系统在并发抢课下保持了业务一致性。
 
 ## 7.7 可视化测试报告与压测产物
 
@@ -119,6 +122,8 @@ pnpm build
 | 准备压测数据 | `pnpm exec tsx scripts/seed-load-test.ts` | `artifacts/load-test-target.json` |
 | 检查k6脚本 | `k6 inspect tests/load/enrollment.js` | 场景和阈值配置 |
 | 执行多学生抢课 | `k6 run --env MODE=flash --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | `artifacts/k6-enrollment-report.html`和JSON摘要 |
+| 执行候补压测 | `k6 run --env MODE=waitlist --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | 满员后显式候补摘要 |
+| 执行写回Worker | `$env:ENROLLMENT_WORKER_BATCH="500"; $env:ENROLLMENT_WORKER_ONCE="1"; pnpm exec tsx scripts/enrollment-worker.ts` | 将Redis预占写回PostgreSQL |
 | 执行限流专项 | `k6 run --env MODE=rate-limit --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | 单账号高频提交摘要 |
 | 校验数据库结果 | `pnpm exec tsx scripts/summarize-load-result.ts` | `artifacts/load-test-verification.md`和JSON摘要 |
 

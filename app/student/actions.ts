@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth/server";
-import { dropCourse, selectCourse } from "@/lib/services/enrollment";
+import {
+  dropCourse,
+  EnrollmentError,
+  joinWaitlist,
+  selectCourse,
+} from "@/lib/services/enrollment";
 
 export async function selectCourseAction(formData: FormData) {
   const { user } = await requireRole("STUDENT");
@@ -12,7 +17,26 @@ export async function selectCourseAction(formData: FormData) {
     throw new Error("缺少选课信息");
   }
 
-  await selectCourse(user.profileId, offeringId);
+  try {
+    await selectCourse(user.profileId, offeringId);
+  } catch (error) {
+    if (!(error instanceof EnrollmentError && error.code === "COURSE_FULL")) {
+      throw error;
+    }
+  }
+
+  revalidatePath("/student");
+}
+
+export async function joinWaitlistAction(formData: FormData) {
+  const { user } = await requireRole("STUDENT");
+  const offeringId = String(formData.get("offeringId") ?? "");
+
+  if (!user.profileId || !offeringId) {
+    throw new Error("缺少候补信息");
+  }
+
+  await joinWaitlist(user.profileId, offeringId);
   revalidatePath("/student");
 }
 

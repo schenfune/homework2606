@@ -7,7 +7,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { categoryLabel, offeringStatusLabel } from "@/lib/format";
 import type { CourseRuleCheck } from "@/lib/services/enrollment";
 import { formatMeetingTime, type MeetingSlot } from "@/lib/services/schedule";
-import { selectCourseAction } from "@/app/student/actions";
+import { joinWaitlistAction, selectCourseAction } from "@/app/student/actions";
 
 export type CourseListItem = {
   id: string;
@@ -48,6 +48,8 @@ export function CourseStatusBadges({ course }: { course: CourseListItem }) {
 
 export function CourseAction({ course }: { course: CourseListItem }) {
   const disabled = course.unavailableReasons.length > 0;
+  const waitlistAction = isFull(course) && !disabled && !course.selected && !course.waitlisted;
+  const action = waitlistAction ? joinWaitlistAction : selectCourseAction;
   const label = course.selected
     ? "已入课表"
     : course.waitlisted
@@ -58,7 +60,7 @@ export function CourseAction({ course }: { course: CourseListItem }) {
 
   return (
     <Tooltip content={disabled ? getTooltipContent(course) : undefined}>
-      <form action={selectCourseAction}>
+      <form action={action}>
         <input name="offeringId" type="hidden" value={course.id} />
         <Button disabled={disabled} size="sm">
           {label}
@@ -126,7 +128,7 @@ function getBlockLabels(course: CourseListItem) {
   }
 
   if (course.waitlisted && !labels.includes("候补中")) {
-    labels.unshift(course.waitlistPosition ? `候补第${course.waitlistPosition}位` : "候补中");
+    labels.unshift("候补中");
   }
 
   return Array.from(new Set(labels));

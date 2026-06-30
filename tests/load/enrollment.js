@@ -9,6 +9,7 @@ const waitlistedResponses = new Counter("waitlisted_responses");
 const successResponses = new Counter("success_responses");
 const unknownSuccessResponses = new Counter("unknown_success_responses");
 const businessRejects = new Counter("business_rejects");
+const courseFullResponses = new Counter("course_full_responses");
 const busyRejects = new Counter("busy_rejects");
 const duplicateRejects = new Counter("duplicate_rejects");
 const conflictRejects = new Counter("conflict_rejects");
@@ -25,12 +26,19 @@ const baseUrl = __ENV.BASE_URL || "http://host.docker.internal:3000";
 const targetFile = __ENV.TARGET_FILE || "../../artifacts/load-test-target.json";
 const targetConfig = readTargetConfig();
 const studentCount = Number(__ENV.STUDENT_COUNT || targetConfig?.studentCount || 200);
-const vus = Number(__ENV.VUS || (mode === "flash" ? studentCount : 100));
+const defaultVus =
+  mode === "flash"
+    ? studentCount
+    : mode === "waitlist"
+    ? Math.max(1, studentCount - Number(targetConfig?.capacity || 0))
+    : 100;
+const vus = Number(__ENV.VUS || defaultVus);
 const duration = __ENV.DURATION || "30s";
 const maxDuration = __ENV.MAX_DURATION || "1m";
 const sleepSeconds = Number(__ENV.SLEEP_SECONDS || (mode === "flash" ? 0 : 1));
 const p95Threshold = Number(__ENV.P95_THRESHOLD_MS || (mode === "flash" ? 10000 : 2000));
 const offeringId = __ENV.OFFERING_ID || targetConfig?.offeringId;
+const targetEndpoint = mode === "waitlist" ? "/api/student/waitlist" : "/api/student/enrollments";
 const manualCookies = (__ENV.SESSION_COOKIES || __ENV.SESSION_COOKIE || "")
   .split("|")
   .map((item) => item.trim())
@@ -42,6 +50,15 @@ export const options = {
     mode === "flash"
       ? {
           enrollment_flash: {
+            executor: "per-vu-iterations",
+            vus,
+            iterations: 1,
+            maxDuration,
+          },
+        }
+      : mode === "waitlist"
+      ? {
+          enrollment_waitlist: {
             executor: "per-vu-iterations",
             vus,
             iterations: 1,
@@ -87,7 +104,13 @@ export function setup() {
     throw new Error(`${targetFile} is missing or contains no students.`);
   }
 
-  const students = mode === "flash" ? targetConfig.students.slice(0, vus) : [targetConfig.students[0]];
+  const capacity = Number(targetConfig.capacity || 0);
+  const students =
+    mode === "flash"
+      ? targetConfig.students.slice(0, vus)
+      : mode === "waitlist"
+      ? targetConfig.students.slice(capacity, capacity + vus)
+      : [targetConfig.students[0]];
   const sessions = students.map((student) =>
     student.cookie
       ? {
@@ -114,7 +137,7 @@ export default function enrollmentLoadTest(data) {
       ? data.sessions[(__VU - 1) % data.sessions.length]
       : data.sessions[(__VU + __ITER) % data.sessions.length];
   const response = http.post(
-    `${baseUrl}/api/student/enrollments`,
+    `${baseUrl}${targetEndpoint}`,
     JSON.stringify({ offeringId: data.offeringId }),
     {
       headers: {
@@ -205,7 +228,7 @@ function recordOutcome(response) {
     }
   } else if (response.status === 400) {
     businessRejects.add(1);
-    recordBusinessReject(body?.message);
+    recordBusinessReject(body?.message, body?.code);
   } else if (response.status === 403) {
     authRejects.add(1);
   } else if (response.status === 429) {
@@ -224,10 +247,12 @@ function parseResponseJson(response) {
   }
 }
 
-function recordBusinessReject(message) {
+function recordBusinessReject(message, code) {
   const text = String(message || "");
 
-  if (
+  if (code === "COURSE_FULL" || text.includes("容量")) {
+    courseFullResponses.add(1);
+  } else if (
     text.includes("正在提交") ||
     text.includes("正在更新") ||
     text.includes("提交冲突")
@@ -242,8 +267,7 @@ function recordBusinessReject(message) {
     text.includes("必修") ||
     text.includes("专业年级") ||
     text.includes("冻结") ||
-    text.includes("停开") ||
-    text.includes("容量")
+    text.includes("停开")
   ) {
     ruleRejects.add(1);
   } else {
@@ -270,11 +294,18 @@ function readTargetConfig() {
 }
 
 function buildTextSummary(data) {
+  const title =
+    mode === "flash"
+      ? "多学生抢课压力测试摘要"
+      : mode === "waitlist"
+      ? "多学生候补压力测试摘要"
+      : "单账号限流专项测试摘要";
+
   return [
     "",
-    mode === "flash" ? "多学生抢课压力测试摘要" : "单账号限流专项测试摘要",
+    title,
     `模式: ${mode}`,
-    `并发学生: ${mode === "flash" ? formatNumber(vus) : "1个账号高频提交"}`,
+    `并发学生: ${mode === "flash" || mode === "waitlist" ? formatNumber(vus) : "1个账号高频提交"}`,
     `课程容量: ${formatNumber(Number(targetConfig?.capacity || 0))}`,
     `请求数: ${formatNumber(metric(data, "http_reqs", "count"))}`,
     `P95延迟: ${formatMs(metric(data, "http_req_duration", "p(95)"))}`,
@@ -282,6 +313,7 @@ function buildTextSummary(data) {
     `候补入队响应: ${formatNumber(metric(data, "waitlisted_responses", "count"))}`,
     `未知成功响应: ${formatNumber(metric(data, "unknown_success_responses", "count"))}`,
     `业务拒绝: ${formatNumber(metric(data, "business_rejects", "count"))}`,
+    `容量满响应: ${formatNumber(metric(data, "course_full_responses", "count"))}`,
     `忙碌拒绝: ${formatNumber(metric(data, "busy_rejects", "count"))}`,
     `重复提交拒绝: ${formatNumber(metric(data, "duplicate_rejects", "count"))}`,
     `时间冲突拒绝: ${formatNumber(metric(data, "conflict_rejects", "count"))}`,
@@ -302,6 +334,8 @@ function buildHtmlReport(data) {
   const waitlisted = metric(data, "waitlisted_responses", "count");
   const unknown = metric(data, "unknown_success_responses", "count");
   const business = metric(data, "business_rejects", "count");
+  const full = metric(data, "course_full_responses", "count");
+  const nonFullBusiness = Math.max(0, business - full);
   const busy = metric(data, "busy_rejects", "count");
   const duplicate = metric(data, "duplicate_rejects", "count");
   const conflict = metric(data, "conflict_rejects", "count");
@@ -311,10 +345,15 @@ function buildHtmlReport(data) {
   const auth = metric(data, "auth_rejects", "count");
   const server = metric(data, "server_errors", "count");
   const generatedAt = new Date().toISOString();
-  const title = mode === "flash" ? "多学生抢课压力测试报告" : "单账号限流专项测试报告";
+  const title =
+    mode === "flash"
+      ? "多学生抢课压力测试报告"
+      : mode === "waitlist"
+      ? "多学生候补压力测试报告"
+      : "单账号限流专项测试报告";
   const cards = [
-    ["模式", mode === "flash" ? "开选瞬间抢课" : "单账号限流"],
-    ["并发学生", mode === "flash" ? formatNumber(vus) : "1个账号"],
+    ["模式", mode === "flash" ? "开选瞬间抢课" : mode === "waitlist" ? "满员后候补" : "单账号限流"],
+    ["并发学生", mode === "flash" || mode === "waitlist" ? formatNumber(vus) : "1个账号"],
     ["课程容量", formatNumber(Number(targetConfig?.capacity || 0))],
     ["总请求", formatNumber(total)],
     ["正式入选响应", formatNumber(active)],
@@ -326,12 +365,14 @@ function buildHtmlReport(data) {
     ["正式入选", active, "#15803d"],
     ["候补入队", waitlisted, "#0369a1"],
     ["未知200", unknown, "#64748b"],
-    ["业务拒绝", business, "#b45309"],
+    ["容量满", full, "#f97316"],
+    ["其他业务拒绝", nonFullBusiness, "#b45309"],
     ["限流", limited, "#7c3aed"],
     ["鉴权拒绝", auth, "#475569"],
     ["服务错误", server, "#b91c1c"],
   ];
   const rejectRows = [
+    ["容量满响应", full],
     ["忙碌拒绝", busy],
     ["重复提交拒绝", duplicate],
     ["时间冲突拒绝", conflict],
@@ -466,7 +507,7 @@ function buildHtmlReport(data) {
       </div>
       <div class="meta">
         <div>生成时间 ${escapeHtml(generatedAt)}</div>
-        <div>目标接口 ${escapeHtml(baseUrl)}/api/student/enrollments</div>
+        <div>目标接口 ${escapeHtml(baseUrl)}${escapeHtml(targetEndpoint)}</div>
       </div>
     </header>
     <section class="grid">

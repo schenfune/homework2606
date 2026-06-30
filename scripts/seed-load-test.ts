@@ -6,6 +6,7 @@ import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db/prisma";
 import { redis } from "../lib/db/redis";
 import { safeInvalidateAllEnrollmentCaches } from "../lib/services/cache";
+import { clearEnrollmentReservationState } from "../lib/services/enrollment-reservations";
 
 const artifactDir = "artifacts";
 const targetPath = `${artifactDir}/load-test-target.json`;
@@ -282,6 +283,7 @@ async function main() {
   );
 
   await safeInvalidateAllEnrollmentCaches();
+  await clearEnrollmentReservationState();
   await clearRateLimitKeys(result.students.map((student) => student.studentNo));
   await mkdir(artifactDir, { recursive: true });
   await clearOldLoadArtifacts();

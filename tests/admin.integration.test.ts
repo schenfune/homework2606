@@ -2,7 +2,8 @@ import { OperationType, RegistrationStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { cancelOffering, getAdminDashboard } from "@/lib/services/admin";
-import { dropCourse, selectCourse } from "@/lib/services/enrollment";
+import { dropCourse, joinWaitlist, selectCourse } from "@/lib/services/enrollment";
+import { processEnrollmentWritebackBatch } from "@/lib/services/enrollment-writeback";
 import { seedDemoData } from "@/prisma/seed";
 
 describe("admin dashboard", () => {
@@ -25,9 +26,19 @@ describe("admin dashboard", () => {
       where: { studentNo: "20240002" },
     });
 
-    const dropped = await selectCourse(studentA.id, offering.id);
+    await selectCourse(studentA.id, offering.id);
+    await drainWriteback();
+    const dropped = await prisma.courseRegistration.findUniqueOrThrow({
+      where: {
+        studentId_offeringId: {
+          studentId: studentA.id,
+          offeringId: offering.id,
+        },
+      },
+    });
     await dropCourse(studentA.id, dropped.id);
     await selectCourse(studentB.id, offering.id);
+    await drainWriteback();
     await cancelOffering("admin-test", offering.id, "测试停开");
 
     const dashboard = await getAdminDashboard();
@@ -62,7 +73,8 @@ describe("admin dashboard", () => {
     });
 
     await selectCourse(studentA.id, offering.id);
-    await selectCourse(studentB.id, offering.id);
+    await joinWaitlist(studentB.id, offering.id);
+    await drainWriteback();
 
     const dashboard = await getAdminDashboard();
     const detail = dashboard.offeringDetails.find((item) => item.id === offering.id);
@@ -92,3 +104,17 @@ describe("admin dashboard", () => {
     );
   });
 });
+
+async function drainWriteback() {
+  for (let index = 0; index < 5; index += 1) {
+    const processed = await processEnrollmentWritebackBatch({
+      consumer: `admin-test-${process.pid}-${index}`,
+      count: 100,
+      blockMs: 1,
+    });
+
+    if (processed === 0) {
+      return;
+    }
+  }
+}

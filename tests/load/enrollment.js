@@ -83,11 +83,11 @@ export const options = {
   },
 };
 
-if (!offeringId) {
-  throw new Error("OFFERING_ID is required. Run scripts/seed-load-test.ts first.");
-}
-
 export function setup() {
+  if (!offeringId) {
+    throw new Error("OFFERING_ID is required. Run scripts/seed-load-test.ts first.");
+  }
+
   if (manualCookies.length > 0) {
     return {
       mode,

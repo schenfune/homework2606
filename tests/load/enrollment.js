@@ -26,11 +26,14 @@ const baseUrl = __ENV.BASE_URL || "http://host.docker.internal:3000";
 const targetFile = __ENV.TARGET_FILE || "../../artifacts/load-test-target.json";
 const targetConfig = readTargetConfig();
 const studentCount = Number(__ENV.STUDENT_COUNT || targetConfig?.studentCount || 200);
+const targetCapacity = Number(targetConfig?.capacity || 0);
+const waitlistStudentCount =
+  targetConfig?.mode === "waitlist" ? studentCount : Math.max(1, studentCount - targetCapacity);
 const defaultVus =
   mode === "flash"
     ? studentCount
     : mode === "waitlist"
-    ? Math.max(1, studentCount - Number(targetConfig?.capacity || 0))
+    ? waitlistStudentCount
     : 100;
 const vus = Number(__ENV.VUS || defaultVus);
 const duration = __ENV.DURATION || "30s";
@@ -109,7 +112,7 @@ export function setup() {
     mode === "flash"
       ? targetConfig.students.slice(0, vus)
       : mode === "waitlist"
-      ? targetConfig.students.slice(capacity, capacity + vus)
+      ? waitlistStudents(targetConfig, capacity).slice(0, vus)
       : [targetConfig.students[0]];
   const sessions = students.map((student) =>
     student.cookie
@@ -291,6 +294,14 @@ function readTargetConfig() {
   } catch {
     return null;
   }
+}
+
+function waitlistStudents(config, capacity) {
+  if (config.mode === "waitlist") {
+    return config.students;
+  }
+
+  return config.students.slice(capacity);
 }
 
 function buildTextSummary(data) {

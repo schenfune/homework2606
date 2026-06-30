@@ -103,7 +103,7 @@ pnpm build
 
 ## 7.6 压测说明
 
-`tests/load/enrollment.js`用于选课HTTP接口压测。压测前先运行`pnpm exec tsx scripts/seed-load-test.ts`生成专用压测课程和压测学生。主压测采用多学生同时抢课模式，目标在于证明开选瞬间Redis预占能够快速判定正式名额，容量外学生收到结构化`COURSE_FULL`，数据库最终登记不超卖。候补压测单独运行`MODE=waitlist`，用于证明满员后显式候补可以稳定入队。单账号重复提交只作为限流专项，用来证明Redis会拦截异常高频请求。
+`tests/load/enrollment.js`用于选课HTTP接口压测。压测前先运行`pnpm exec tsx scripts/seed-load-test.ts`生成专用压测课程和压测学生。主压测采用多学生同时抢课模式，目标在于证明开选瞬间Redis预占能够快速判定正式名额，容量外学生收到结构化`COURSE_FULL`，数据库最终登记不超卖。由于抢到正式名额的学生由并发到达顺序决定，候补压测前先运行`pnpm exec tsx scripts/prepare-waitlist-load-test.ts`，根据Redis真实预占名单生成候补目标文件，再运行`MODE=waitlist`证明满员后显式候补可以稳定入队。单账号重复提交只作为限流专项，用来证明Redis会拦截异常高频请求。
 
 建议在报告中记录压测配置、并发学生数、课程容量、正式预占响应数、容量满响应数、候补入队响应数、P95延迟、服务端错误数、Redis闸门状态和数据库最终登记数量。抢课主报告的理想结果是正式入选响应等于课程容量、容量满响应等于剩余提交学生数、服务错误为0；候补报告的理想结果是候补入队响应等于候补提交人数。压测后运行Worker并执行汇总脚本，若有效登记数不超过课程容量、`enrolledCount`匹配有效登记、Redis正式预占数与最终登记一致，可以说明系统在并发抢课下保持了业务一致性。
 
@@ -122,7 +122,8 @@ pnpm build
 | 准备压测数据 | `pnpm exec tsx scripts/seed-load-test.ts` | `artifacts/load-test-target.json` |
 | 检查k6脚本 | `k6 inspect tests/load/enrollment.js` | 场景和阈值配置 |
 | 执行多学生抢课 | `k6 run --env MODE=flash --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | `artifacts/k6-enrollment-report.html`和JSON摘要 |
-| 执行候补压测 | `k6 run --env MODE=waitlist --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | 满员后显式候补摘要 |
+| 准备候补目标 | `pnpm exec tsx scripts/prepare-waitlist-load-test.ts` | `artifacts/load-test-waitlist-target.json` |
+| 执行候补压测 | `k6 run --env MODE=waitlist --env TARGET_FILE=../../artifacts/load-test-waitlist-target.json --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | 满员后显式候补摘要 |
 | 执行写回Worker | `$env:ENROLLMENT_WORKER_BATCH="500"; $env:ENROLLMENT_WORKER_ONCE="1"; pnpm exec tsx scripts/enrollment-worker.ts` | 将Redis预占写回PostgreSQL |
 | 执行限流专项 | `k6 run --env MODE=rate-limit --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | 单账号高频提交摘要 |
 | 校验数据库结果 | `pnpm exec tsx scripts/summarize-load-result.ts` | `artifacts/load-test-verification.md`和JSON摘要 |

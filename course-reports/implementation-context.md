@@ -129,6 +129,8 @@ GitHub Actions环境不会复用本机已经生成的`.prisma/client`，因此CI
 
 k6脚本的目标课程校验放在`setup()`阶段，避免`k6 inspect`这种静态检查在CI中因为没有压测目标文件而失败；真正执行压测时仍会要求先运行`seed-load-test.ts`生成目标课程。
 
+Nginx反向代理必须保留浏览器访问时带端口的`Host`，否则Next.js Server Actions会发现`Origin: localhost:8080`与转发后的`x-forwarded-host: localhost`不一致并拒绝POST请求。当前Nginx配置使用`$http_host`转发`Host`和`X-Forwarded-Host`，保证多实例入口下表单提交、选课按钮和管理员操作都能通过同一外部地址校验。
+
 ## 覆盖率补强记录
 
 根据`artifacts/coverage/coverage-final.json`，本轮优先补强低覆盖服务模块。新增`tests/cache.test.ts`覆盖Redis缓存读取、写入、按学生失效、全量失效和安全失效异常吞掉分支；扩展`tests/schedule.test.ts`覆盖区间边界和星期格式化兜底；扩展`tests/admin.integration.test.ts`覆盖开放期更新、非法时间范围、冻结名单和结果快照。

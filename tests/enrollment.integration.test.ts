@@ -1,5 +1,6 @@
-import { CourseCategory, RegistrationStatus } from "@prisma/client";
+import { CourseCategory, OfferingStatus, RegistrationStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it } from "vitest";
+import { redis } from "@/lib/db/redis";
 import { prisma } from "@/lib/db/prisma";
 import {
   dropCourse,
@@ -174,6 +175,12 @@ describe("enrollment service", () => {
     expect(offering.enrolledCount).toBe(1);
   });
 
+  it("rejects waitlist requests while seats are still available", async () => {
+    const { studentId, offeringId } = await fixture("20240001", "SE304");
+
+    await expect(joinWaitlist(studentId, offeringId)).rejects.toThrow("课程仍有余量");
+  });
+
   it("assigns FIFO waitlist positions", async () => {
     const first = await fixture("20240001", "GE204");
     const second = await fixture("20240002", "GE204");
@@ -261,6 +268,62 @@ describe("enrollment service", () => {
     expect(dropped.status).toBe(RegistrationStatus.DROPPED);
     expect(dropped.waitlistPosition).toBeNull();
     expect(offering.enrolledCount).toBe(1);
+  });
+
+  it("cancels an unconfirmed reservation before it is written back", async () => {
+    const { studentId, offeringId } = await fixture("20240001", "SE304");
+
+    const reserved = await selectCourse(studentId, offeringId);
+    await dropCourse(studentId, reserved.id);
+
+    const reservation = await redis.hGetAll(reserved.id);
+    const registrations = await prisma.courseRegistration.count({
+      where: { studentId, offeringId },
+    });
+
+    expect(reservation.status).toBeUndefined();
+    expect(registrations).toBe(0);
+  });
+
+  it("rejects invalid, required, and frozen drop requests", async () => {
+    const student = await prisma.studentProfile.findUniqueOrThrow({
+      where: { studentNo: "20240001" },
+    });
+    const required = await prisma.courseRegistration.findFirstOrThrow({
+      where: {
+        studentId: student.id,
+        offering: {
+          course: {
+            courseNo: "SE101",
+          },
+        },
+      },
+    });
+    const elective = await fixture("20240001", "SE304");
+
+    await expect(dropCourse(student.id, "missing-registration")).rejects.toThrow(
+      "选课记录不存在",
+    );
+    await expect(dropCourse(student.id, required.id)).rejects.toThrow("必修课不可退课");
+
+    await selectCourse(elective.studentId, elective.offeringId);
+    await drainWriteback();
+    const active = await prisma.courseRegistration.findUniqueOrThrow({
+      where: {
+        studentId_offeringId: {
+          studentId: elective.studentId,
+          offeringId: elective.offeringId,
+        },
+      },
+    });
+    await prisma.courseOffering.update({
+      where: { id: elective.offeringId },
+      data: { status: OfferingStatus.CLOSED },
+    });
+
+    await expect(dropCourse(elective.studentId, active.id)).rejects.toThrow(
+      "课程已冻结，不能退课",
+    );
   });
 });
 

@@ -316,6 +316,7 @@ function buildTextSummary(data) {
     "",
     title,
     `模式: ${mode}`,
+    `压测入口: ${baseUrl}`,
     `并发学生: ${mode === "flash" || mode === "waitlist" ? formatNumber(vus) : "1个账号高频提交"}`,
     `课程容量: ${formatNumber(Number(targetConfig?.capacity || 0))}`,
     `请求数: ${formatNumber(metric(data, "http_reqs", "count"))}`,
@@ -364,6 +365,7 @@ function buildHtmlReport(data) {
       : "单账号限流专项测试报告";
   const cards = [
     ["模式", mode === "flash" ? "开选瞬间抢课" : mode === "waitlist" ? "满员后候补" : "单账号限流"],
+    ["压测入口", baseUrl],
     ["并发学生", mode === "flash" || mode === "waitlist" ? formatNumber(vus) : "1个账号"],
     ["课程容量", formatNumber(Number(targetConfig?.capacity || 0))],
     ["总请求", formatNumber(total)],
@@ -555,6 +557,16 @@ function buildHtmlReport(data) {
           <tr><td>应用可处理结果</td><td>95%以上</td><td>${formatPercent(
             metric(data, "handled_outcomes", "rate"),
           )}</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="panel">
+      <h2>水平扩展说明</h2>
+      <table>
+        <tbody>
+          <tr><td>入口</td><td>${escapeHtml(baseUrl)}</td></tr>
+          <tr><td>部署形态</td><td>Nginx反向代理到多个Next.js实例，Redis和PostgreSQL共享</td></tr>
+          <tr><td>一致性目标</td><td>多实例同时接收请求时，正式入选不超过课程名额，最终名单与计数一致</td></tr>
         </tbody>
       </table>
     </section>

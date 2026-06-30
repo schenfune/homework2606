@@ -131,6 +131,19 @@ pnpm build
 | 执行限流专项 | `k6 run --env MODE=rate-limit --env BASE_URL=http://localhost:3000 tests/load/enrollment.js` | 单账号高频提交摘要 |
 | 校验数据库结果 | `pnpm exec tsx scripts/summarize-load-result.ts` | `artifacts/load-test-verification.md`和JSON摘要 |
 
+水平扩展压测使用Nginx入口，推荐规模为1000名学生抢100个名额。准备命令如下：
+
+```powershell
+$env:LOAD_STUDENT_COUNT="1000"
+$env:LOAD_COURSE_CAPACITY="100"
+pnpm exec tsx scripts/seed-load-test.ts
+k6 run --env MODE=flash --env BASE_URL=http://localhost:8080 --env VUS=1000 --env P95_THRESHOLD_MS=2000 tests/load/enrollment.js
+```
+
+压测后运行Worker和汇总脚本，报告中记录正式入选响应、容量满响应、服务错误、P95延迟、数据库有效登记和`enrolledCount`一致性。该组证据用于说明请求经Nginx分发到多个Next.js实例后，Redis预占和PostgreSQL最终名单仍保持一致。
+
+CI证据建议截图GitHub Actions流水线。当前流水线包含Prisma校验、数据库迁移、Vitest、ESLint、Next构建、k6脚本静态检查和Docker镜像构建，可作为自动化测试与持续集成材料。
+
 表7.7列出报告中建议截图的位置。
 
 表7.7 可视化测试截图

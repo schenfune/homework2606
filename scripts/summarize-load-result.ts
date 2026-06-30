@@ -232,6 +232,10 @@ function renderMarkdown(report: LoadVerificationReport) {
 | 服务错误 | ${formatNumber(report.k6.serverErrors)} |
 | 应用可处理结果 | ${(report.k6.handledOutcomeRate * 100).toFixed(1)}% |
 
+## 水平扩展说明
+
+本次压测可通过Nginx入口访问多个Next.js实例，多个应用实例共享Redis抢课入口和PostgreSQL最终名单。校验重点不是单机页面吞吐，而是请求被分发后仍能保持正式入选不超过容量、已选计数与最终名单一致。
+
 ## 数据库一致性
 
 | 校验项 | 结果 |

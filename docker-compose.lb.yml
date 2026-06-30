@@ -1,0 +1,72 @@
+services:
+  app1:
+    build:
+      context: .
+    image: course-next-app:local
+    environment:
+      APP_INSTANCE: app1
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:114514@host.docker.internal:5432/course
+      REDIS_URL: redis://host.docker.internal:6379/0
+      BETTER_AUTH_URL: http://localhost:8080
+      BETTER_AUTH_SECRET: course-dev-secret-change-me-before-production-2026
+      ENROLLMENT_RESULT_API_KEY: course-result-demo-key
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  app2:
+    image: course-next-app:local
+    environment:
+      APP_INSTANCE: app2
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:114514@host.docker.internal:5432/course
+      REDIS_URL: redis://host.docker.internal:6379/0
+      BETTER_AUTH_URL: http://localhost:8080
+      BETTER_AUTH_SECRET: course-dev-secret-change-me-before-production-2026
+      ENROLLMENT_RESULT_API_KEY: course-result-demo-key
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - app1
+
+  app3:
+    image: course-next-app:local
+    environment:
+      APP_INSTANCE: app3
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:114514@host.docker.internal:5432/course
+      REDIS_URL: redis://host.docker.internal:6379/0
+      BETTER_AUTH_URL: http://localhost:8080
+      BETTER_AUTH_SECRET: course-dev-secret-change-me-before-production-2026
+      ENROLLMENT_RESULT_API_KEY: course-result-demo-key
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - app1
+
+  enrollment-worker:
+    image: course-next-app:local
+    command: ["pnpm", "exec", "tsx", "scripts/enrollment-worker.ts"]
+    environment:
+      APP_INSTANCE: worker1
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:114514@host.docker.internal:5432/course
+      REDIS_URL: redis://host.docker.internal:6379/0
+      BETTER_AUTH_URL: http://localhost:8080
+      BETTER_AUTH_SECRET: course-dev-secret-change-me-before-production-2026
+      ENROLLMENT_RESULT_API_KEY: course-result-demo-key
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - app1
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app1
+      - app2
+      - app3

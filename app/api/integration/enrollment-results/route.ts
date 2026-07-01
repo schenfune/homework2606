@@ -5,7 +5,9 @@ import { registrationStatusLabel } from "@/lib/format";
 import { getEnrollmentResultSnapshot } from "@/lib/services/admin";
 import { assertRateLimit } from "@/lib/services/rate-limit";
 
+// 外部教务系统读取选课结果快照的接口。
 export async function GET(request: NextRequest) {
+  // 使用API Key保护结果接口，避免未授权读取名单。
   const apiKey = request.headers.get("x-api-key");
   const expectedApiKey =
     process.env.ENROLLMENT_RESULT_API_KEY ?? "course-result-demo-key";
@@ -15,6 +17,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // 对同一API Key限流，防止外部系统异常轮询。
     await assertRateLimit({
       key: `rate-limit:result-api:${apiKey}`,
       limit: 60,
@@ -27,8 +30,10 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // 结果快照由管理员服务统一生成，保持与CSV导出一致。
   const rows = await getEnrollmentResultSnapshot();
 
+  // 查询也写入操作日志，形成外部接口审计记录。
   await prisma.operationLog.create({
     data: {
       type: OperationType.RESULT_API_ACCESSED,

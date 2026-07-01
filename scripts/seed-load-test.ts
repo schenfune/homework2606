@@ -25,6 +25,7 @@ type LoadStudent = {
   cookie: string;
 };
 
+// 准备多学生抢课压测所需的课程、学生账号和会话Cookie。
 async function main() {
   if (!Number.isInteger(studentCount) || studentCount <= 0) {
     throw new Error("LOAD_STUDENT_COUNT必须是正整数");
@@ -34,8 +35,10 @@ async function main() {
     throw new Error("LOAD_COURSE_CAPACITY必须是正整数");
   }
 
+  // 在一个事务内重建压测课程和学生，避免半成品数据进入压测。
   const result = await prisma.$transaction(
     async (tx) => {
+      // 压测学生统一放在软件学院和软件工程专业下。
       const department = await tx.department.upsert({
         where: { code: "SE" },
         update: {
@@ -59,6 +62,7 @@ async function main() {
         },
       });
       const term = await ensureCurrentTerm(tx);
+      // LT101是专用压测课程，不参与普通演示课程。
       const course = await tx.course.upsert({
         where: { courseNo },
         update: {
@@ -99,11 +103,13 @@ async function main() {
       const registrationCleanup: Prisma.CourseRegistrationWhereInput[] = [];
 
       if (existingOffering) {
+        // 重建同一压测课程时，先清理旧名单和旧日志。
         operationLogCleanup.push({ targetId: existingOffering.id });
         registrationCleanup.push({ offeringId: existingOffering.id });
       }
 
       if (existingStudentIds.length > 0) {
+        // 旧压测学生产生的登记和日志也要清理。
         operationLogCleanup.push({
           actorId: {
             in: existingStudentIds,
@@ -171,6 +177,7 @@ async function main() {
         },
       });
 
+      // 压测课程安排在较晚节次，减少与普通演示课程冲突。
       await tx.meetingTime.create({
         data: {
           offeringId: offering.id,
@@ -194,6 +201,7 @@ async function main() {
       const passwordHash = await hashPassword(password);
       const sessionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
+      // 预置Better Auth会话Cookie，避免压测被登录接口限流影响。
       for (let index = 1; index <= studentCount; index += 1) {
         const studentNo = `${studentPrefix}${String(index).padStart(4, "0")}`;
         const email = `${studentNo.toLowerCase()}@campus.local`;
@@ -282,11 +290,13 @@ async function main() {
     },
   );
 
+  // 压测前清理缓存、Redis预占和限流键，保证结果可复现。
   await safeInvalidateAllEnrollmentCaches();
   await clearEnrollmentReservationState();
   await clearRateLimitKeys(result.students.map((student) => student.studentNo));
   await mkdir(artifactDir, { recursive: true });
   await clearOldLoadArtifacts();
+  // k6脚本从目标文件读取课程、容量、学生和Cookie。
   await writeFile(
     targetPath,
     `${JSON.stringify(
@@ -316,6 +326,7 @@ async function main() {
   console.log(`目标文件: ${targetPath}`);
 }
 
+// 确保存在当前学期，压测数据必须挂到当前学期下。
 async function ensureCurrentTerm(tx: Prisma.TransactionClient) {
   const currentTerm = await tx.term.findFirst({
     where: {
@@ -327,6 +338,7 @@ async function ensureCurrentTerm(tx: Prisma.TransactionClient) {
     return currentTerm;
   }
 
+  // 没有当前学期时创建一个开放中的默认学期。
   const now = new Date();
   return tx.term.upsert({
     where: {
@@ -349,6 +361,7 @@ async function ensureCurrentTerm(tx: Prisma.TransactionClient) {
   });
 }
 
+// 清理压测学生的限流键，避免上一次压测影响下一次结果。
 async function clearRateLimitKeys(studentNos: string[]) {
   const profiles = await prisma.studentProfile.findMany({
     where: {
@@ -366,6 +379,7 @@ async function clearRateLimitKeys(studentNos: string[]) {
   }
 }
 
+// 删除旧压测报告，避免新旧结果混在一起。
 async function clearOldLoadArtifacts() {
   await Promise.all(
     [
@@ -377,6 +391,7 @@ async function clearOldLoadArtifacts() {
   );
 }
 
+// 生成Better Auth兼容的签名会话Token。
 async function signSessionToken(token: string) {
   return `${token}.${await makeSignature(token, authSecret)}`;
 }

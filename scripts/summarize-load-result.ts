@@ -68,14 +68,17 @@ type LoadVerificationReport = {
   };
 };
 
+// 汇总k6指标、Redis预占和PostgreSQL最终登记，生成压测证据。
 async function main() {
   await mkdir(artifactDir, { recursive: true });
 
+  // 优先使用目标文件中的开课班ID，失效时按课程号和班号回退查找。
   const target = await readLoadTarget();
   const offeringId = process.env.LOAD_OFFERING_ID || target?.offeringId;
   const courseNo = process.env.LOAD_COURSE_NO || target?.courseNo || "LT101";
   const classNo = process.env.LOAD_CLASS_NO || target?.classNo || "LT";
   const offering = await resolveLoadOffering({ offeringId, courseNo, classNo });
+  // 按登记状态聚合数据库最终名单。
   const grouped = await prisma.courseRegistration.groupBy({
     by: ["status"],
     where: {
@@ -93,6 +96,7 @@ async function main() {
     counts[item.status] = item._count._all;
   }
 
+  // Redis gate代表入口预占结果，数据库登记代表最终落库结果。
   const activeCount = counts.ACTIVE;
   const waitlistedCount = counts.WAITLISTED;
   const redisGate = await getRedisGateSnapshot(offering.id);
@@ -102,6 +106,7 @@ async function main() {
   const counterConsistent = activeCount === offering.enrolledCount;
   const consistent = capacityConsistent && counterConsistent;
   const k6Summary = await readK6Summary();
+  // 报告同时保存机器可读JSON和可直接截图的Markdown。
   const report: LoadVerificationReport = {
     generatedAt: new Date().toISOString(),
     target: {
@@ -163,6 +168,7 @@ async function main() {
   console.log(`JSON摘要: ${verificationJsonPath}`);
 }
 
+// 读取k6生成的JSON摘要。
 async function readK6Summary(): Promise<K6Summary | null> {
   if (!existsSync(k6SummaryPath)) {
     return null;
@@ -171,6 +177,7 @@ async function readK6Summary(): Promise<K6Summary | null> {
   return JSON.parse(await readFile(k6SummaryPath, "utf8")) as K6Summary;
 }
 
+// 读取压测目标文件，获取课程和班号。
 async function readLoadTarget(): Promise<LoadTarget | null> {
   if (!existsSync(targetPath)) {
     return null;
@@ -179,6 +186,7 @@ async function readLoadTarget(): Promise<LoadTarget | null> {
   return JSON.parse(await readFile(targetPath, "utf8")) as LoadTarget;
 }
 
+// 定位本次压测对应的开课班。
 async function resolveLoadOffering({
   offeringId,
   courseNo,
@@ -194,6 +202,7 @@ async function resolveLoadOffering({
   } as const;
 
   if (offeringId) {
+    // 目标文件中的ID最准确，但Seed重跑后可能失效。
     const offering = await prisma.courseOffering.findUnique({
       where: { id: offeringId },
       include,
@@ -208,6 +217,7 @@ async function resolveLoadOffering({
     );
   }
 
+  // ID失效时按当前学期、课程号和班号重新查找。
   const offering = await prisma.courseOffering.findFirst({
     where: {
       classNo,
@@ -230,11 +240,13 @@ async function resolveLoadOffering({
   return offering;
 }
 
+// 从k6摘要中安全读取某个指标值。
 function k6Metric(summary: K6Summary | null, name: string, key: string) {
   const value = summary?.metrics?.[name]?.values?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+// 渲染适合报告截图的Markdown摘要。
 function renderMarkdown(report: LoadVerificationReport) {
   return `# 选课接口压力测试校验
 
@@ -296,10 +308,12 @@ function renderMarkdown(report: LoadVerificationReport) {
 `;
 }
 
+// 格式化整数指标，便于终端和Markdown阅读。
 function formatNumber(value: number) {
   return Math.round(value).toLocaleString("zh-CN");
 }
 
+// 把布尔校验结果转成中文结论。
 function passText(value: boolean) {
   return value ? "通过" : "失败";
 }

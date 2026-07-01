@@ -31,6 +31,7 @@ type WritebackAction = {
   invalidateCaches?: boolean;
 };
 
+// 确保Redis Stream消费组存在，Worker启动和批处理前都会调用。
 export async function ensureEnrollmentWritebackGroup() {
   try {
     await redis.sendCommand([
@@ -45,11 +46,13 @@ export async function ensureEnrollmentWritebackGroup() {
     const message = error instanceof Error ? error.message : "";
 
     if (!message.includes("BUSYGROUP")) {
+      // BUSYGROUP表示消费组已存在，其余错误需要抛出。
       throw error;
     }
   }
 }
 
+// 从Redis Stream读取一批预占任务并写回数据库。
 export async function processEnrollmentWritebackBatch({
   consumer = `worker-${process.pid}`,
   count = 25,
@@ -61,6 +64,7 @@ export async function processEnrollmentWritebackBatch({
 } = {}) {
   await ensureEnrollmentWritebackGroup();
 
+  // XREADGROUP阻塞读取新消息，没消息时最多等待blockMs。
   const reply = await redis.sendCommand([
     "XREADGROUP",
     "GROUP",
@@ -78,6 +82,7 @@ export async function processEnrollmentWritebackBatch({
 
   for (const task of tasks) {
     try {
+      // 每条任务独立写回，单条失败不阻塞后续任务。
       await writeBackReservation(task);
       await redis.sendCommand([
         "XACK",
@@ -86,6 +91,7 @@ export async function processEnrollmentWritebackBatch({
         task.id,
       ]);
     } catch (error) {
+      // 未ACK的消息会留在Stream pending中，后续可由运维功能重投。
       console.error("Enrollment writeback failed", task, error);
     }
   }
@@ -93,14 +99,17 @@ export async function processEnrollmentWritebackBatch({
   return tasks.length;
 }
 
+// 根据预占任务类型写入正式登记或候补登记。
 async function writeBackReservation(task: StreamTask) {
   const status = await redis.hGet(task.reservationKey, "status");
   const expectedStatus = task.kind === "ACTIVE" ? "ACTIVE_RESERVED" : "WAITLIST_RESERVED";
 
   if (status !== expectedStatus) {
+    // 预占已被确认、释放或失败时，直接跳过以保证幂等。
     return;
   }
 
+  // 数据库事务内使用开课班锁，保证同一开课班的容量和候补顺序稳定。
   const action = await prisma.$transaction(
     async (tx) => {
       await acquireOfferingLock(tx, task.offeringId);
@@ -122,6 +131,7 @@ async function writeBackReservation(task: StreamTask) {
       });
 
       if (!student || !offering || offering.status !== OfferingStatus.PUBLISHED) {
+        // 学生、课程不存在或课程不可选时释放Redis预占。
         return {
           releaseReservation: true,
           invalidateCaches: true,
@@ -142,10 +152,12 @@ async function writeBackReservation(task: StreamTask) {
   );
 
   if (action.releaseReservation) {
+    // 数据库无法接收该预占时，归还Redis名额或删除候补预占。
     await releaseReservation(task.profileId, task.offeringId);
   }
 
   if (action.confirmStatus) {
+    // 写回成功后保留短期确认状态，供学生端刷新时合并展示。
     await markReservationConfirmed({
       profileId: task.profileId,
       offeringId: task.offeringId,
@@ -154,10 +166,12 @@ async function writeBackReservation(task: StreamTask) {
   }
 
   if (action.invalidateCaches) {
+    // 写回改变了最终名单，需要清理学生和管理员侧缓存。
     await safeInvalidateAllEnrollmentCaches();
   }
 }
 
+// 把正式预占写成ACTIVE登记，并维护开课班已选人数。
 async function writeBackActiveRegistration({
   tx,
   task,
@@ -176,17 +190,20 @@ async function writeBackActiveRegistration({
   existing: { id: string; status: RegistrationStatus } | null;
 }): Promise<WritebackAction> {
   if (existing?.status === RegistrationStatus.ACTIVE) {
+    // 已经写回过的任务只需要确认Redis状态。
     return {
       confirmStatus: "CONFIRMED_ACTIVE",
     };
   }
 
   if (existing?.status === RegistrationStatus.WAITLISTED) {
+    // 同一学生已经候补时，不允许再写入正式预占。
     return {
       releaseReservation: true,
     };
   }
 
+  // 用updateMany带容量条件，防止数据库最终名单超过容量。
   const updated = await tx.courseOffering.updateMany({
     where: {
       id: offering.id,
@@ -202,6 +219,7 @@ async function writeBackActiveRegistration({
   });
 
   if (updated.count !== 1) {
+    // 数据库容量已满时释放Redis预占，并刷新页面状态。
     return {
       releaseReservation: true,
       invalidateCaches: true,
@@ -209,6 +227,7 @@ async function writeBackActiveRegistration({
   }
 
   if (existing) {
+    // 复用退课或移除后的登记记录，避免唯一约束冲突。
     await tx.courseRegistration.update({
       where: { id: existing.id },
       data: {
@@ -219,6 +238,7 @@ async function writeBackActiveRegistration({
       },
     });
   } else {
+    // 首次选课时创建新的正式登记。
     await tx.courseRegistration.create({
       data: {
         studentId: task.profileId,
@@ -228,6 +248,7 @@ async function writeBackActiveRegistration({
     });
   }
 
+  // 写入操作日志，标记该记录来自异步写回。
   await tx.operationLog.create({
     data: {
       type: OperationType.COURSE_SELECTED,
@@ -247,6 +268,7 @@ async function writeBackActiveRegistration({
   };
 }
 
+// 把候补预占写成WAITLISTED登记。
 async function writeBackWaitlistRegistration({
   tx,
   task,
@@ -261,21 +283,25 @@ async function writeBackWaitlistRegistration({
   existing: { id: string; status: RegistrationStatus } | null;
 }): Promise<WritebackAction> {
   if (existing?.status === RegistrationStatus.WAITLISTED) {
+    // 候补已存在时只确认Redis状态，避免重复入队。
     return {
       confirmStatus: "CONFIRMED_WAITLIST",
     };
   }
 
   if (existing?.status === RegistrationStatus.ACTIVE) {
+    // 已经正式入选时不再保留候补预占。
     return {
       releaseReservation: true,
     };
   }
 
+  // 优先使用Redis预占时生成的顺位，缺失时按数据库当前最大值补齐。
   const position = task.waitlistPosition ?? (await nextWaitlistPosition(tx, task.offeringId));
   const now = new Date();
 
   if (existing) {
+    // 复用历史登记记录进入候补状态。
     await tx.courseRegistration.update({
       where: { id: existing.id },
       data: {
@@ -285,6 +311,7 @@ async function writeBackWaitlistRegistration({
       },
     });
   } else {
+    // 首次候补时创建候补登记。
     await tx.courseRegistration.create({
       data: {
         studentId: task.profileId,
@@ -296,6 +323,7 @@ async function writeBackWaitlistRegistration({
     });
   }
 
+  // 操作日志保存候补顺位，方便管理员追踪。
   await tx.operationLog.create({
     data: {
       type: OperationType.COURSE_WAITLISTED,
@@ -316,12 +344,14 @@ async function writeBackWaitlistRegistration({
   };
 }
 
+// 对开课班加PostgreSQL事务级咨询锁。
 async function acquireOfferingLock(tx: Prisma.TransactionClient, offeringId: string) {
   await tx.$queryRaw<{ locked: string | null }[]>`
     SELECT pg_advisory_xact_lock(hashtext(${`offering:${offeringId}`}))::text AS locked
   `;
 }
 
+// 计算数据库中的下一个候补顺位。
 async function nextWaitlistPosition(tx: Prisma.TransactionClient, offeringId: string) {
   const aggregate = await tx.courseRegistration.aggregate({
     where: {
@@ -336,6 +366,7 @@ async function nextWaitlistPosition(tx: Prisma.TransactionClient, offeringId: st
   return (aggregate._max.waitlistPosition ?? 0) + 1;
 }
 
+// 把Redis XREADGROUP返回值解析成写回任务列表。
 function parseStreamTasks(reply: unknown) {
   const tasks: StreamTask[] = [];
 
@@ -363,11 +394,13 @@ function parseStreamTasks(reply: unknown) {
       const fields = entry[1] as unknown[];
       const data: Record<string, string> = {};
 
+      // Redis Stream字段按key/value交替排列，需要还原成对象。
       for (let index = 0; index < fields.length; index += 2) {
         data[String(fields[index])] = String(fields[index + 1] ?? "");
       }
 
       if (!data.profileId || !data.offeringId || !data.kind) {
+        // 字段不完整的消息不进入写回流程。
         continue;
       }
 

@@ -32,9 +32,12 @@ type ReservationSnapshot = {
   kind?: string;
 };
 
+// 根据抢课后的Redis预占结果生成候补压测目标文件。
 async function main() {
+  // 主压测目标文件中包含压测课程和全部压测学生。
   const target = JSON.parse(await readFile(sourcePath, "utf8")) as LoadTarget;
   const reservations = await loadOfferingReservations(target.offeringId);
+  // 已经正式预占或候补的学生不能再作为候补压测目标。
   const occupiedProfileIds = Array.from(
     new Set(
       reservations
@@ -57,6 +60,7 @@ async function main() {
         })
       : [];
   const occupiedStudentNos = new Set(occupiedProfiles.map((profile) => profile.studentNo));
+  // 候补压测只使用未抢到正式名额的学生。
   const waitlistStudents = target.students.filter(
     (student) => !occupiedStudentNos.has(student.studentNo),
   );
@@ -68,6 +72,7 @@ async function main() {
   ).length;
 
   await mkdir(artifactDir, { recursive: true });
+  // 输出新的目标文件，k6 waitlist模式会读取这个文件。
   await writeFile(
     outputPath,
     `${JSON.stringify(
@@ -98,11 +103,13 @@ async function main() {
   console.log(`目标文件: ${outputPath}`);
 }
 
+// 读取某个开课班下所有Redis预占记录。
 async function loadOfferingReservations(offeringId: string) {
   const keys = await redis.keys(`enrollment:reservation:*:${offeringId}`);
   const reservations: ReservationSnapshot[] = [];
 
   for (const key of keys) {
+    // 每条reservation是Redis hash，包含profileId、kind和status等字段。
     reservations.push(await redis.hGetAll(key));
   }
 

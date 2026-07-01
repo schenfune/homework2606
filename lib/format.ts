@@ -6,6 +6,7 @@ import {
   Role,
 } from "@prisma/client";
 
+// 把课程类别枚举转换成页面展示文本。
 export function categoryLabel(category: CourseCategory) {
   return {
     REQUIRED: "必修课",
@@ -14,6 +15,7 @@ export function categoryLabel(category: CourseCategory) {
   }[category];
 }
 
+// 把开课班状态枚举转换成页面展示文本。
 export function offeringStatusLabel(status: OfferingStatus) {
   return {
     PUBLISHED: "开放",
@@ -22,6 +24,7 @@ export function offeringStatusLabel(status: OfferingStatus) {
   }[status];
 }
 
+// 把选课登记状态枚举转换成页面展示文本。
 export function registrationStatusLabel(status: RegistrationStatus) {
   return {
     ACTIVE: "已选",
@@ -31,6 +34,7 @@ export function registrationStatusLabel(status: RegistrationStatus) {
   }[status];
 }
 
+// 把操作日志类型枚举转换成页面展示文本。
 export function operationTypeLabel(type: OperationType) {
   return {
     COURSE_SELECTED: "学生选课",
@@ -46,6 +50,7 @@ export function operationTypeLabel(type: OperationType) {
   }[type];
 }
 
+// 把用户角色枚举转换成页面展示文本。
 export function roleLabel(role: Role) {
   return {
     STUDENT: "学生",
@@ -53,6 +58,7 @@ export function roleLabel(role: Role) {
   }[role];
 }
 
+// 格式化日期时间，用于页面和导出中的人工可读时间。
 export function dateTimeLabel(date: Date | string) {
   return new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -63,6 +69,7 @@ export function dateTimeLabel(date: Date | string) {
   }).format(new Date(date));
 }
 
+// 生成datetime-local输入框需要的本地时间字符串。
 export function datetimeLocalValue(date: Date | string) {
   const value = new Date(date);
   const parts = new Intl.DateTimeFormat("zh-CN", {
@@ -74,6 +81,7 @@ export function datetimeLocalValue(date: Date | string) {
     minute: "2-digit",
     hourCycle: "h23",
   }).formatToParts(value);
+  // Intl返回分段结果，按HTML输入框格式重新拼接。
   const part = (type: string) =>
     parts.find((item) => item.type === type)?.value ?? "";
 

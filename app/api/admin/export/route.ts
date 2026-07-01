@@ -2,7 +2,7 @@ import { OperationType, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { requireAdminApi } from "@/lib/auth/api";
 import { prisma } from "@/lib/db/prisma";
-import { categoryLabel, registrationStatusLabel } from "@/lib/format";
+import { categoryLabel, dateTimeLabel, registrationStatusLabel } from "@/lib/format";
 import { getEnrollmentResultSnapshot } from "@/lib/services/admin";
 
 export async function GET() {
@@ -25,7 +25,7 @@ export async function GET() {
       row.student.major.name,
       `${row.student.grade}`,
       registrationStatusLabel(row.status),
-      row.registeredAt.toISOString(),
+      dateTimeLabel(row.registeredAt),
     ]),
   ]
     .map((row) => row.map(csvCell).join(","))

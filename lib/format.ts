@@ -55,6 +55,7 @@ export function roleLabel(role: Role) {
 
 export function dateTimeLabel(date: Date | string) {
   return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -64,7 +65,17 @@ export function dateTimeLabel(date: Date | string) {
 
 export function datetimeLocalValue(date: Date | string) {
   const value = new Date(date);
-  const offset = value.getTimezoneOffset();
-  const local = new Date(value.getTime() - offset * 60 * 1000);
-  return local.toISOString().slice(0, 16);
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(value);
+  const part = (type: string) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+
+  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
 }

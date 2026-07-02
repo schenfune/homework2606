@@ -188,3 +188,9 @@ Nginx反向代理必须保留浏览器访问时带端口的`Host`，否则Next.j
 报告第5.3节“关键代码分析”已从五类实现概述改为三段真实代码节选加设计分析。三段分别覆盖规则诊断构造器、Redis正式名额预占Lua脚本、退课递补事务；代码块不加标题和编号，只由正文自然引出。表5.2改为“关键代码与设计思想”，行内容对应规则诊断、Redis预占和退课递补三类核心风险。
 
 后端核心函数已补充中文短注释，覆盖`lib/services`、`lib/auth`、`app/api`、学生和管理员Server Actions以及`scripts`中的压测和Worker辅助脚本。注释重点放在函数职责、鉴权边界、Redis预占、Stream写回、事务锁、候补递补、运维恢复和压测证据生成上；同时用脚本检查了这些后端函数上一行均有注释，并用`git diff --check`确认没有空白格式问题。
+
+## 学生选课入口限流统一
+
+学生页面按钮和HTTP压测接口已统一到同一套Redis限流策略。`lib/services/rate-limit.ts`新增`RateLimitError`和`assertStudentEnrollmentRateLimit`，选课、候补、退课三个动作分别使用`rate-limit:select:<profileId>`、`rate-limit:waitlist:<profileId>`、`rate-limit:drop:<profileId>`，限制参数统一为每名学生每类动作60秒20次。
+
+学生Server Action在调用正式选课、加入候补和退课服务前先执行共享限流；`/api/student/enrollments`和`/api/student/waitlist`也改为调用同一函数，并在捕获`RateLimitError`时返回429。这样页面入口和k6压测入口对应同一个边界防护策略，避免出现“压测接口有限流、真实页面无限流”的讲解漏洞。压测Seed脚本同步清理三类限流键，保证重复运行压测时旧窗口不会污染结果。

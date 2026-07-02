@@ -8,6 +8,7 @@ import {
   joinWaitlist,
   selectCourse,
 } from "@/lib/services/enrollment";
+import { assertStudentEnrollmentRateLimit } from "@/lib/services/rate-limit";
 
 // 学生页面表单提交的正式选课动作。
 export async function selectCourseAction(formData: FormData) {
@@ -18,6 +19,9 @@ export async function selectCourseAction(formData: FormData) {
   if (!user.profileId || !offeringId) {
     throw new Error("缺少选课信息");
   }
+
+  // 页面按钮和压测API共用同一套Redis限流策略。
+  await assertStudentEnrollmentRateLimit(user.profileId, "select");
 
   try {
     // 满员不是页面异常，捕获后让页面刷新为候补入口。
@@ -41,6 +45,9 @@ export async function joinWaitlistAction(formData: FormData) {
     throw new Error("缺少候补信息");
   }
 
+  // 页面按钮和压测API共用同一套Redis限流策略。
+  await assertStudentEnrollmentRateLimit(user.profileId, "waitlist");
+
   await joinWaitlist(user.profileId, offeringId);
   // 刷新学生页，使候补状态和课表立即更新。
   revalidatePath("/student");
@@ -55,6 +62,9 @@ export async function dropCourseAction(formData: FormData) {
   if (!user.profileId || !registrationId) {
     throw new Error("缺少退课信息");
   }
+
+  // 页面按钮和HTTP退课接口共用同一套Redis限流策略。
+  await assertStudentEnrollmentRateLimit(user.profileId, "drop");
 
   await dropCourse(user.profileId, registrationId);
   // 退课后需要刷新课程列表、课表和按钮状态。

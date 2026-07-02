@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/auth/server";
 import { EnrollmentError, joinWaitlist } from "@/lib/services/enrollment";
-import { assertRateLimit } from "@/lib/services/rate-limit";
+import {
+  assertStudentEnrollmentRateLimit,
+  RateLimitError,
+} from "@/lib/services/rate-limit";
 
 // 学生加入候补HTTP入口，满员后由学生显式触发。
 export async function POST(request: NextRequest) {
@@ -20,15 +23,15 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // 候补入口也需要限流，避免单账号异常高频提交。
-    await assertRateLimit({
-      key: `rate-limit:waitlist:${user.profileId}`,
-      limit: 20,
-      windowSeconds: 60,
-    });
+    // API和页面按钮共用同一套Redis限流策略。
+    await assertStudentEnrollmentRateLimit(user.profileId, "waitlist");
   } catch (error) {
+    if (!(error instanceof RateLimitError)) {
+      throw error;
+    }
+
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "请求过于频繁" },
+      { ok: false, message: error.message },
       { status: 429 },
     );
   }

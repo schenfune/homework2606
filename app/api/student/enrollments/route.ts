@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/auth/server";
 import { dropCourse, EnrollmentError, selectCourse } from "@/lib/services/enrollment";
-import { assertRateLimit } from "@/lib/services/rate-limit";
+import {
+  assertStudentEnrollmentRateLimit,
+  RateLimitError,
+} from "@/lib/services/rate-limit";
 
 // 学生正式选课HTTP入口，供k6压测和前端API调用使用。
 export async function POST(request: NextRequest) {
@@ -20,15 +23,15 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // 限制单个学生在短时间内重复提交选课请求。
-    await assertRateLimit({
-      key: `rate-limit:select:${user.profileId}`,
-      limit: 20,
-      windowSeconds: 60,
-    });
+    // API和页面按钮共用同一套Redis限流策略。
+    await assertStudentEnrollmentRateLimit(user.profileId, "select");
   } catch (error) {
+    if (!(error instanceof RateLimitError)) {
+      throw error;
+    }
+
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "请求过于频繁" },
+      { ok: false, message: error.message },
       { status: 429 },
     );
   }
@@ -76,6 +79,17 @@ export async function DELETE(request: NextRequest) {
 
   if (!user || user.role !== "STUDENT" || !user.profileId) {
     return NextResponse.json({ ok: false, message: "无权访问" }, { status: 403 });
+  }
+
+  try {
+    // 退课也纳入同一套学生动作限流，避免页面和API入口不一致。
+    await assertStudentEnrollmentRateLimit(user.profileId, "drop");
+  } catch (error) {
+    if (!(error instanceof RateLimitError)) {
+      throw error;
+    }
+
+    return NextResponse.json({ ok: false, message: error.message }, { status: 429 });
   }
 
   const body = (await request.json()) as { registrationId?: string };

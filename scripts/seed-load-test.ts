@@ -7,6 +7,7 @@ import { prisma } from "../lib/db/prisma";
 import { redis } from "../lib/db/redis";
 import { safeInvalidateAllEnrollmentCaches } from "../lib/services/cache";
 import { clearEnrollmentReservationState } from "../lib/services/enrollment-reservations";
+import { studentEnrollmentRateLimitKey } from "../lib/services/rate-limit";
 
 const artifactDir = "artifacts";
 const targetPath = `${artifactDir}/load-test-target.json`;
@@ -375,7 +376,13 @@ async function clearRateLimitKeys(studentNos: string[]) {
   });
 
   if (profiles.length > 0) {
-    await redis.del(profiles.map((profile) => `rate-limit:select:${profile.id}`));
+    await redis.del(
+      profiles.flatMap((profile) => [
+        studentEnrollmentRateLimitKey(profile.id, "select"),
+        studentEnrollmentRateLimitKey(profile.id, "waitlist"),
+        studentEnrollmentRateLimitKey(profile.id, "drop"),
+      ]),
+    );
   }
 }
 
